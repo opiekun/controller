@@ -31,17 +31,17 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
     private readonly object _suppressionGate = new();
     private readonly KeyboardStateStore _stateStore = new();
     private readonly SuppressionPolicy _suppressionPolicy;
-    private readonly Func<bool> _isEngineRunning;
     private readonly NativeMethods.HookProcedure _hookProcedure;
     private readonly HashSet<InputKey> _suppressedKeys = [];
     private SafeHookHandle? _hook;
+    private long _captureGeneration;
     private int _acceptingInput;
+    private int _engineIsRunning;
     private int _disposed;
 
-    public LowLevelKeyboardInputSource(AppConfiguration configuration, Func<bool> isEngineRunning)
+    public LowLevelKeyboardInputSource(AppConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
-        _isEngineRunning = isEngineRunning ?? throw new ArgumentNullException(nameof(isEngineRunning));
         _suppressionPolicy = new SuppressionPolicy(configuration);
         _hookProcedure = HookCallback;
     }
@@ -49,6 +49,11 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
     public InputHealth Health => Volatile.Read(ref _disposed) != 0 ? InputHealth.Unavailable : _stateStore.Health;
 
     public event EventHandler<KeyStateChangedEventArgs>? KeyStateChanged;
+
+    /// <summary>
+    /// Updates cached engine state from composition code. The hook callback only reads this value.
+    /// </summary>
+    public void SetEngineRunning(bool isRunning) => Volatile.Write(ref _engineIsRunning, isRunning ? 1 : 0);
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -62,7 +67,7 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
                 return Task.CompletedTask;
             }
 
-            _stateStore.Clear(InputHealth.Synchronizing);
+            var captureGeneration = _stateStore.BeginCapture();
             var nativeHandle = NativeMethods.SetWindowsHookEx(
                 WhKeyboardLl,
                 _hookProcedure,
@@ -78,6 +83,7 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
             _hook = new SafeHookHandle(nativeHandle);
             SynchronizeCurrentModifiers();
             _stateStore.SetHealth(InputHealth.Healthy);
+            Volatile.Write(ref _captureGeneration, captureGeneration);
             Volatile.Write(ref _acceptingInput, 1);
         }
 
@@ -90,6 +96,7 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
         lock (_lifecycleGate)
         {
             Volatile.Write(ref _acceptingInput, 0);
+            SetEngineRunning(isRunning: false);
             hook = _hook;
             _hook = null;
             lock (_suppressionGate)
@@ -97,7 +104,8 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
                 _suppressedKeys.Clear();
             }
 
-            _stateStore.Clear(InputHealth.Unavailable);
+            _stateStore.StopCapture();
+            Volatile.Write(ref _captureGeneration, 0);
         }
 
         hook?.Dispose();
@@ -138,8 +146,16 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
                 return NativeMethods.CallNextHookEx(nint.Zero, code, wParam, lParam);
             }
 
-            var notification = isDown ? _stateStore.ApplyDown(key) : _stateStore.ApplyUp(key);
-            var suppress = isDown ? ShouldSuppressDown(key) : WasSuppressedOnDown(key);
+            var captureGeneration = Volatile.Read(ref _captureGeneration);
+            var notification = isDown
+                ? _stateStore.TryApplyDown(key, captureGeneration)
+                : _stateStore.TryApplyUp(key, captureGeneration);
+            if (!_stateStore.IsCurrentCapture(captureGeneration))
+            {
+                return NativeMethods.CallNextHookEx(nint.Zero, code, wParam, lParam);
+            }
+
+            var suppress = isDown ? ShouldSuppressDown(key, captureGeneration) : WasSuppressedOnDown(key, captureGeneration);
             if (notification is not null)
             {
                 DispatchNotification(notification);
@@ -156,23 +172,26 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
         }
     }
 
-    private bool ShouldSuppressDown(InputKey key)
+    private bool ShouldSuppressDown(InputKey key, long captureGeneration)
     {
-        var engineIsRunning = false;
-        try
-        {
-            engineIsRunning = _isEngineRunning();
-        }
-        catch
+        if (!_stateStore.IsCurrentCapture(captureGeneration))
         {
             return false;
         }
 
-        var suppress = _suppressionPolicy.ShouldSuppress(key, _stateStore.PeekSnapshot(), engineIsRunning);
+        var suppress = _suppressionPolicy.ShouldSuppress(
+            key,
+            _stateStore.PeekSnapshot(),
+            Volatile.Read(ref _engineIsRunning) != 0);
         if (suppress)
         {
             lock (_suppressionGate)
             {
+                if (!_stateStore.IsCurrentCapture(captureGeneration))
+                {
+                    return false;
+                }
+
                 _suppressedKeys.Add(key);
             }
         }
@@ -180,11 +199,11 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
         return suppress;
     }
 
-    private bool WasSuppressedOnDown(InputKey key)
+    private bool WasSuppressedOnDown(InputKey key, long captureGeneration)
     {
         lock (_suppressionGate)
         {
-            return _suppressedKeys.Remove(key);
+            return _stateStore.IsCurrentCapture(captureGeneration) && _suppressedKeys.Remove(key);
         }
     }
 

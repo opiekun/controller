@@ -14,6 +14,7 @@ public sealed class KeyboardStateStore
     private readonly List<KeyTransition> _pendingTransitions = [];
     private readonly Dictionary<InputKey, long> _transitionSequences = [];
     private long _sequence;
+    private long _captureGeneration;
     private long _lastHeartbeatTimestamp;
     private InputHealth _health = InputHealth.Synchronizing;
 
@@ -42,6 +43,44 @@ public sealed class KeyboardStateStore
     public KeyStateChangedEventArgs? ApplyDown(InputKey key) => Apply(key, isDown: true);
 
     public KeyStateChangedEventArgs? ApplyUp(InputKey key) => Apply(key, isDown: false);
+
+    /// <summary>
+    /// Starts a capture session. Callbacks must present this generation before they may mutate state.
+    /// </summary>
+    public long BeginCapture()
+    {
+        lock (_gate)
+        {
+            ClearUnsafe(InputHealth.Synchronizing);
+            return ++_captureGeneration;
+        }
+    }
+
+    /// <summary>
+    /// Invalidates all callbacks from the current capture session before clearing keyboard state.
+    /// </summary>
+    public void StopCapture()
+    {
+        lock (_gate)
+        {
+            ++_captureGeneration;
+            ClearUnsafe(InputHealth.Unavailable);
+        }
+    }
+
+    public bool IsCurrentCapture(long captureGeneration)
+    {
+        lock (_gate)
+        {
+            return captureGeneration != 0 && captureGeneration == _captureGeneration;
+        }
+    }
+
+    public KeyStateChangedEventArgs? TryApplyDown(InputKey key, long captureGeneration) =>
+        Apply(key, isDown: true, captureGeneration);
+
+    public KeyStateChangedEventArgs? TryApplyUp(InputKey key, long captureGeneration) =>
+        Apply(key, isDown: false, captureGeneration);
 
     public InputSnapshot GetSnapshot()
     {
@@ -100,16 +139,11 @@ public sealed class KeyboardStateStore
     {
         lock (_gate)
         {
-            _pressedKeys.Clear();
-            _pendingTransitions.Clear();
-            _transitionSequences.Clear();
-            _sequence = 0;
-            _health = health;
-            _lastHeartbeatTimestamp = Stopwatch.GetTimestamp();
+            ClearUnsafe(health);
         }
     }
 
-    private KeyStateChangedEventArgs? Apply(InputKey key, bool isDown)
+    private KeyStateChangedEventArgs? Apply(InputKey key, bool isDown, long? captureGeneration = null)
     {
         if (key == InputKey.None)
         {
@@ -118,6 +152,11 @@ public sealed class KeyboardStateStore
 
         lock (_gate)
         {
+            if (captureGeneration is not null && captureGeneration.Value != _captureGeneration)
+            {
+                return null;
+            }
+
             _lastHeartbeatTimestamp = Stopwatch.GetTimestamp();
             _health = InputHealth.Healthy;
 
@@ -132,6 +171,16 @@ public sealed class KeyboardStateStore
             _pendingTransitions.Add(transition);
             return new KeyStateChangedEventArgs(transition);
         }
+    }
+
+    private void ClearUnsafe(InputHealth health)
+    {
+        _pressedKeys.Clear();
+        _pendingTransitions.Clear();
+        _transitionSequences.Clear();
+        _sequence = 0;
+        _health = health;
+        _lastHeartbeatTimestamp = Stopwatch.GetTimestamp();
     }
 
     private InputModifiers CurrentModifiers()

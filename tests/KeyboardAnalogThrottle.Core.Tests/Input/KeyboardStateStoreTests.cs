@@ -38,4 +38,18 @@ public sealed class KeyboardStateStoreTests
         Assert.Equal(2, snapshot.TransitionSequence(InputKey.W));
         Assert.Empty(store.GetSnapshot().Transitions);
     }
+
+    [Fact]
+    public void Callback_from_a_stopped_capture_generation_cannot_restore_keyboard_state()
+    {
+        var store = new KeyboardStateStore();
+        var captureGeneration = store.BeginCapture();
+
+        store.StopCapture();
+        var notification = store.TryApplyDown(InputKey.W, captureGeneration);
+
+        Assert.Null(notification);
+        Assert.False(store.GetSnapshot().IsPressed(InputKey.W));
+        Assert.Equal(InputHealth.Unavailable, store.Health);
+    }
 }
