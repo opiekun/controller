@@ -1,6 +1,7 @@
 using KeyboardAnalogThrottle.App.Services;
 using KeyboardAnalogThrottle.Core.Abstractions;
 using KeyboardAnalogThrottle.Core.Emulation;
+using KeyboardAnalogThrottle.Infrastructure.Windows.Controller;
 
 namespace KeyboardAnalogThrottle.App.Tests.Services;
 
@@ -27,6 +28,21 @@ public sealed class EmulationSessionTests
 
         Assert.Equal(1, factoryCalls);
         Assert.Equal(1, engine.StartCalls);
+    }
+
+    [Fact]
+    public async Task Driver_creation_failure_publishes_unavailable_controller_fault_state()
+    {
+        await using var session = new EmulationSession(
+            () => throw new VigemDriverException(new InvalidOperationException("driver unavailable")),
+            new BlockingControllerTestService());
+
+        await Assert.ThrowsAsync<VigemDriverException>(() => session.StartAsync(CancellationToken.None));
+
+        Assert.Equal(VirtualControllerAvailability.Unavailable, session.State.ControllerAvailability);
+        Assert.Equal(EmulationFaultKind.Controller, session.State.Fault?.Kind);
+        Assert.False(session.State.IsControllerConnected);
+        Assert.False(session.State.IsKeyboardHookConnected);
     }
 
     [Fact]

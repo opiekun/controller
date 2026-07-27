@@ -34,6 +34,8 @@
                                    Text="{Binding IsKeyboardHookConnected, StringFormat=Keyboard hook connected: {0}}" />
                         <TextBlock Margin="0,4,0,0" FontWeight="SemiBold"
                                    Text="{Binding IsControllerConnected, StringFormat=Controller connected: {0}}" />
+                        <TextBlock Margin="0,4,0,0" FontWeight="SemiBold"
+                                   Text="{Binding VigemBusAvailability, StringFormat=ViGEmBus: {0}}" />
                     </StackPanel>
                 </Grid>
             </Border>
@@ -91,6 +93,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Margin="0,0,16,8" FontWeight="SemiBold" Text="Input health" />
                     <TextBlock Grid.Column="1" Margin="0,0,0,8" Text="{Binding InputHealth}" />
@@ -98,6 +101,8 @@
                     <TextBlock Grid.Row="1" Grid.Column="1" Margin="0,0,0,8" TextWrapping="Wrap" Text="{Binding ActiveBindings}" />
                     <TextBlock Grid.Row="2" Margin="0,0,16,0" FontWeight="SemiBold" Text="Key suppression" />
                     <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding IsSuppressionEnabled, StringFormat=Enabled: {0}}" />
+                    <TextBlock Grid.Row="3" Margin="0,8,16,0" FontWeight="SemiBold" Text="Throttle cut" />
+                    <TextBlock Grid.Row="3" Grid.Column="1" Margin="0,8,0,0" Text="{Binding IsThrottleCutActive, StringFormat=Active: {0}}" />
                 </Grid>
             </Expander>
 

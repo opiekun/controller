@@ -5,11 +5,26 @@ using KeyboardAnalogThrottle.Core.Abstractions;
 using KeyboardAnalogThrottle.Core.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
+using Serilog.Events;
 
 namespace KeyboardAnalogThrottle.App.Tests.Services;
 
 public sealed class ApplicationLifetimeServiceTests
 {
+    [Fact]
+    public void Logging_options_use_configuration_minimum_level_and_retention()
+    {
+        var settings = LoggingConfigurationFactory.Resolve(new LoggingConfiguration
+        {
+            MinimumLevel = "Warning",
+            RetainedFileCountLimit = 3
+        });
+
+        Assert.Equal(LogEventLevel.Warning, settings.MinimumLevel);
+        Assert.Equal(3, settings.RetainedFileCountLimit);
+    }
+
     [Fact]
     public async Task Initialize_does_not_resolve_the_emulation_engine()
     {
@@ -21,6 +36,21 @@ public sealed class ApplicationLifetimeServiceTests
         var result = await lifetime.InitializeAsync(CancellationToken.None);
 
         Assert.True(result.IsSuccess);
+    }
+
+    [Fact]
+    public async Task Initialize_logs_startup_runtime_operating_system_and_configuration_path()
+    {
+        var logger = new RecordingLogger<ApplicationLifetimeService>();
+        await using var lifetime = new ApplicationLifetimeService(
+            new ValidConfigurationService(),
+            new ThrowingEngineProvider(),
+            logger);
+
+        await lifetime.InitializeAsync(CancellationToken.None);
+
+        Assert.Contains(logger.Messages, message => message.Contains("Application startup", StringComparison.Ordinal));
+        Assert.Contains(logger.Messages, message => message.Contains("configuration path", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -72,5 +102,21 @@ public sealed class ApplicationLifetimeServiceTests
 
             return null;
         }
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
     }
 }

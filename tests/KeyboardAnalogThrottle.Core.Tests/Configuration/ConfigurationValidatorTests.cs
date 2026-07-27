@@ -300,6 +300,20 @@ public sealed class ConfigurationValidatorTests
             error => error.PropertyName == "Throttle.Curve" && error.Message == "Throttle curve is invalid.");
     }
 
+    [Fact]
+    public void Rejects_unknown_logging_minimum_level()
+    {
+        var defaults = AppConfiguration.CreateDefault();
+        var configuration = defaults with
+        {
+            Logging = defaults.Logging with { MinimumLevel = "Verbose" }
+        };
+
+        Assert.Contains(
+            ConfigurationValidator.Validate(configuration),
+            error => error.PropertyName == "Logging.MinimumLevel" && error.Message == "Logging minimum level is invalid.");
+    }
+
     private static void AssertFixedLevels(ChannelConfiguration channel, string key)
     {
         Assert.Equal(.25d, channel.FixedLevels[$"Ctrl+{key}"]);

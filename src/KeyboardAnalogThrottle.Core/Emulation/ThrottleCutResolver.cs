@@ -10,13 +10,16 @@ public sealed class ThrottleCutResolver
 {
     private bool _toggleCutActive;
 
+    public bool IsActive { get; private set; }
+
     public double Resolve(InputSnapshot input, InputBinding cutBinding, double throttle, bool toggle)
     {
         ArgumentNullException.ThrowIfNull(input);
 
         if (!toggle)
         {
-            return cutBinding.Matches(input) ? 0d : throttle;
+            IsActive = cutBinding.Matches(input);
+            return IsActive ? 0d : throttle;
         }
 
         var transitions = input.Transitions;
@@ -29,8 +32,13 @@ public sealed class ThrottleCutResolver
             }
         }
 
-        return _toggleCutActive ? 0d : throttle;
+        IsActive = _toggleCutActive;
+        return IsActive ? 0d : throttle;
     }
 
-    public void Reset() => _toggleCutActive = false;
+    public void Reset()
+    {
+        _toggleCutActive = false;
+        IsActive = false;
+    }
 }

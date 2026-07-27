@@ -19,22 +19,18 @@ public static class ServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        var configurationService = new JsonConfigurationService();
+        _ = configurationService.ReloadAsync(CancellationToken.None).GetAwaiter().GetResult();
+
         var logsDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "KeyboardAnalogThrottle",
             "Logs");
-        Directory.CreateDirectory(logsDirectory);
-        var logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
-            .WriteTo.File(
-                Path.Combine(logsDirectory, "keyboard-analog-throttle-.log"),
-                rollingInterval: RollingInterval.Day,
-                retainedFileCountLimit: 7)
-            .CreateLogger();
+        var logger = LoggingConfigurationFactory.Create(configurationService.Current.Logging, logsDirectory);
 
         services.AddLogging(builder => builder.AddSerilog(logger, dispose: true));
-        services.AddSingleton<JsonConfigurationService>();
-        services.AddSingleton<IConfigurationService>(provider => provider.GetRequiredService<JsonConfigurationService>());
+        services.AddSingleton(configurationService);
+        services.AddSingleton<IConfigurationService>(configurationService);
         services.AddSingleton<VigemControllerFactory>();
         services.AddSingleton<IClock, StopwatchClock>();
         services.AddSingleton<IControllerTestService, ControllerTestService>();
@@ -45,12 +41,15 @@ public static class ServiceCollectionExtensions
                 () =>
                 {
                     var configuration = provider.GetRequiredService<IConfigurationService>().Current;
-                    input = new LowLevelKeyboardInputSource(configuration);
+                    input = new LowLevelKeyboardInputSource(
+                        configuration,
+                        provider.GetRequiredService<ILogger<LowLevelKeyboardInputSource>>());
                     return new EmulationEngine(
                         configuration,
                         provider.GetRequiredService<VigemControllerFactory>().Create(),
                         input,
-                        provider.GetRequiredService<IClock>());
+                        provider.GetRequiredService<IClock>(),
+                        logger: provider.GetRequiredService<ILogger<EmulationEngine>>());
                 },
                 provider.GetRequiredService<IControllerTestService>(),
                 isRunning => input?.SetEngineRunning(isRunning),

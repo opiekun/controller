@@ -19,6 +19,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\KeyboardAnalogThrottle.App\KeyboardAnalogThrottle.App.csproj" />
     <ProjectReference Include="..\..\src\KeyboardAnalogThrottle.Core\KeyboardAnalogThrottle.Core.csproj" />
+    <ProjectReference Include="..\..\src\KeyboardAnalogThrottle.Infrastructure.Windows\KeyboardAnalogThrottle.Infrastructure.Windows.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,6 +1,7 @@
 using KeyboardAnalogThrottle.Core.Abstractions;
 using KeyboardAnalogThrottle.Core.Configuration;
 using KeyboardAnalogThrottle.Core.Emulation;
+using KeyboardAnalogThrottle.Infrastructure.Windows.Controller;
 
 namespace KeyboardAnalogThrottle.App.Services;
 
@@ -70,6 +71,11 @@ public sealed class EmulationSession : IEmulationSession
         {
             ThrowIfDisposed();
             await GetOrCreateEngine().StartAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (VigemDriverException exception)
+        {
+            PublishDriverUnavailable(exception);
+            throw;
         }
         finally
         {
@@ -187,6 +193,11 @@ public sealed class EmulationSession : IEmulationSession
             controllerTestStarted = true;
             await _controllerTest.RunAsync(testCancellation.Token).ConfigureAwait(false);
         }
+        catch (VigemDriverException exception)
+        {
+            PublishDriverUnavailable(exception);
+            throw;
+        }
         finally
         {
             if (controllerTestStarted)
@@ -303,7 +314,8 @@ public sealed class EmulationSession : IEmulationSession
         {
             IsRunning = false,
             IsKeyboardHookConnected = false,
-            IsControllerConnected = true
+            IsControllerConnected = true,
+            ControllerAvailability = VirtualControllerAvailability.Available
         });
 
         var handlers = ControllerTestProgressChanged;
@@ -329,4 +341,10 @@ public sealed class EmulationSession : IEmulationSession
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
     }
+
+    private void PublishDriverUnavailable(VigemDriverException exception) => PublishState(EmulationState.Stopped with
+    {
+        Fault = new EmulationFault(EmulationFaultKind.Controller, exception.Message, exception),
+        ControllerAvailability = VirtualControllerAvailability.Unavailable
+    });
 }

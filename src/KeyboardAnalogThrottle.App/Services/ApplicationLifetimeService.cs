@@ -32,6 +32,12 @@ public sealed class ApplicationLifetimeService : IAsyncDisposable
 
     public async Task<ConfigurationReloadResult> InitializeAsync(CancellationToken cancellationToken)
     {
+        _logger.LogInformation(
+            "Application startup. Runtime {RuntimeVersion}; operating system {OperatingSystem}; configuration path {ConfigurationPath}.",
+            Environment.Version,
+            Environment.OSVersion,
+            JsonConfigurationService.GetDefaultConfigurationPath());
+
         var result = await _configuration.ReloadAsync(cancellationToken).ConfigureAwait(false);
         if (!result.IsSuccess)
         {
@@ -45,6 +51,7 @@ public sealed class ApplicationLifetimeService : IAsyncDisposable
 
         _windowsLifecycle.Start();
         Volatile.Write(ref _initialized, 1);
+        _logger.LogInformation("Configuration loaded successfully.");
         return result;
     }
 
@@ -54,6 +61,8 @@ public sealed class ApplicationLifetimeService : IAsyncDisposable
         {
             return;
         }
+
+        _logger.LogWarning("Emergency emulation cleanup requested.");
 
         Task cleanup;
         lock (_cleanupGate)
@@ -82,6 +91,7 @@ public sealed class ApplicationLifetimeService : IAsyncDisposable
         }
 
         _windowsLifecycle.Dispose();
+        _logger.LogInformation("Application shutdown requested.");
         var initialized = Volatile.Read(ref _initialized) != 0;
         if (initialized)
         {
@@ -103,6 +113,8 @@ public sealed class ApplicationLifetimeService : IAsyncDisposable
         {
             await session.DisposeAsync().ConfigureAwait(false);
         }
+
+        _logger.LogInformation("Application shutdown completed.");
     }
 
     private async Task EmergencyStopAsync()

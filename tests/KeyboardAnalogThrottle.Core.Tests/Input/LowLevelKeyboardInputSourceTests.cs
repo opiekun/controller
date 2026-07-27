@@ -3,6 +3,7 @@ using KeyboardAnalogThrottle.Core.Configuration;
 using KeyboardAnalogThrottle.Core.Emulation;
 using KeyboardAnalogThrottle.Infrastructure.Windows.Interop;
 using KeyboardAnalogThrottle.Infrastructure.Windows.Keyboard;
+using Microsoft.Extensions.Logging;
 
 namespace KeyboardAnalogThrottle.Core.Tests.Input;
 
@@ -10,6 +11,23 @@ namespace KeyboardAnalogThrottle.Core.Tests.Input;
 public sealed class LowLevelKeyboardInputSourceTests
 {
     private const nint PassedThrough = 73;
+
+    [Fact]
+    public async Task Start_and_stop_log_hook_lifecycle_without_logging_callback_events()
+    {
+        var logger = new RecordingLogger<LowLevelKeyboardInputSource>();
+        var platform = new FakeKeyboardHookPlatform(PassedThrough);
+        await using var source = new LowLevelKeyboardInputSource(
+            Configuration(),
+            platform,
+            logger: logger);
+
+        await source.StartAsync(CancellationToken.None);
+        await source.StopAsync(CancellationToken.None);
+
+        Assert.Contains(logger.Messages, message => message.Contains("Keyboard hook installed", StringComparison.Ordinal));
+        Assert.Contains(logger.Messages, message => message.Contains("Keyboard hook removed", StringComparison.Ordinal));
+    }
 
     [Fact]
     public async Task Callback_from_unhooked_installation_paused_before_admission_cannot_mutate_replacement_capture()
@@ -208,6 +226,22 @@ public sealed class LowLevelKeyboardInputSourceTests
 
             await Task.Delay(10);
         }
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
     }
 
     private sealed class FakeKeyboardHookPlatform(nint passedThroughResult) : IKeyboardHookPlatform

@@ -160,6 +160,12 @@ public static class ConfigurationValidator
 
     private static void ValidateLogging(LoggingConfiguration logging, ICollection<ConfigurationValidationError> errors)
     {
+        if (!Enum.TryParse<Microsoft.Extensions.Logging.LogLevel>(logging.MinimumLevel, ignoreCase: true, out var minimumLevel) ||
+            !Enum.IsDefined(minimumLevel))
+        {
+            errors.Add(new("Logging.MinimumLevel", "Logging minimum level is invalid."));
+        }
+
         if (logging.RetainedFileCountLimit <= 0)
         {
             errors.Add(new("Logging.RetainedFileCountLimit", "Retained log file count must be greater than zero."));

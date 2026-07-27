@@ -39,6 +39,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _isControllerConnected;
     private bool _isSuppressionEnabled;
     private string _activeBindings = string.Empty;
+    private string _activeThrottleBinding = "None";
+    private string _activeBrakeBinding = "None";
+    private bool _isThrottleCutActive;
+    private string _vigemBusAvailability = "Unknown";
     private string _inputHealth = "Healthy";
 
     public MainWindowViewModel(
@@ -66,7 +70,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         _session.StateChanged += OnEngineStateChanged;
         _session.ControllerTestProgressChanged += OnControllerTestProgressChanged;
-        ApplyConfiguration(_configuration.Current);
         ApplyState(_session.State);
     }
 
@@ -92,6 +95,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public bool IsControllerConnected { get => _isControllerConnected; private set => SetProperty(ref _isControllerConnected, value); }
     public bool IsSuppressionEnabled { get => _isSuppressionEnabled; private set => SetProperty(ref _isSuppressionEnabled, value); }
     public string ActiveBindings { get => _activeBindings; private set => SetProperty(ref _activeBindings, value); }
+    public string ActiveThrottleBinding { get => _activeThrottleBinding; private set => SetProperty(ref _activeThrottleBinding, value); }
+    public string ActiveBrakeBinding { get => _activeBrakeBinding; private set => SetProperty(ref _activeBrakeBinding, value); }
+    public bool IsThrottleCutActive { get => _isThrottleCutActive; private set => SetProperty(ref _isThrottleCutActive, value); }
+    public string VigemBusAvailability { get => _vigemBusAvailability; private set => SetProperty(ref _vigemBusAvailability, value); }
     public string InputHealth { get => _inputHealth; private set => SetProperty(ref _inputHealth, value); }
     public bool IsOperationInProgress { get => _isOperationInProgress; private set => SetProperty(ref _isOperationInProgress, value); }
     public bool IsControllerTestRunning { get => _isControllerTestRunning; private set => SetProperty(ref _isControllerTestRunning, value); }
@@ -134,7 +141,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 throw new InvalidOperationException(string.Join(Environment.NewLine, result.Errors.Select(static error => $"{error.PropertyName}: {error.Message}")));
             }
 
-            ApplyOnUiThread(() => ApplyConfiguration(_configuration.Current));
         }, "Configuration reloaded and applied.");
     }
 
@@ -272,6 +278,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         BrakePercentage = ToPercentage(state.Brake);
         IsKeyboardHookConnected = state.IsKeyboardHookConnected;
         IsControllerConnected = state.IsControllerConnected;
+        IsSuppressionEnabled = state.IsInputSuppressionEnabled;
+        ActiveThrottleBinding = state.ActiveThrottleBinding ?? "None";
+        ActiveBrakeBinding = state.ActiveBrakeBinding ?? "None";
+        ActiveBindings = $"Throttle: {ActiveThrottleBinding} | Brake: {ActiveBrakeBinding}";
+        IsThrottleCutActive = state.IsThrottleCutActive;
+        VigemBusAvailability = state.ControllerAvailability.ToString();
         InputHealth = state.InputHealth.ToString();
         if (state.Fault is not null)
         {
@@ -279,15 +291,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         RaiseCommandCanExecuteChanged();
-    }
-
-    private void ApplyConfiguration(AppConfiguration configuration)
-    {
-        IsSuppressionEnabled = configuration.Input.SuppressMappedKeys;
-        ActiveBindings = $"Throttle: {configuration.Throttle.PrimaryBinding}; fixed: {FormatFixedLevels(configuration.Throttle)} | " +
-            $"Brake: {configuration.Brake.PrimaryBinding}; fixed: {FormatFixedLevels(configuration.Brake)} | " +
-            $"Ratchet: increase {configuration.Ratchet.IncreaseBinding}, decrease {configuration.Ratchet.DecreaseBinding}, reset {configuration.Ratchet.ResetBinding} | " +
-            $"Throttle cut: {configuration.Input.ThrottleCutBinding} | Emergency: {configuration.Input.EmergencyDisableBinding}";
     }
 
     private void ReportOperationFailure(Exception exception)
@@ -328,12 +331,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private AsyncRelayCommand CreateCommand(Func<Task> execute, Func<bool> canExecute) =>
         new(execute, canExecute, _synchronizationContext);
-
-    private static string FormatFixedLevels(ChannelConfiguration channel) => channel.FixedLevels.Count == 0
-        ? "none"
-        : string.Join(", ", channel.FixedLevels
-            .OrderBy(static entry => entry.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(static entry => $"{entry.Key} ({entry.Value:P0})"));
 
     private static double ToPercentage(double value) => Math.Round(Math.Clamp(value, 0d, 1d) * 100d, 1);
 }

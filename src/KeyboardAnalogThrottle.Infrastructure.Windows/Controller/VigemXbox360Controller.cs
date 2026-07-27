@@ -3,6 +3,8 @@ using Nefarius.ViGEm.Client;
 using Nefarius.ViGEm.Client.Exceptions;
 using Nefarius.ViGEm.Client.Targets;
 using Nefarius.ViGEm.Client.Targets.Xbox360;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace KeyboardAnalogThrottle.Infrastructure.Windows.Controller;
 
@@ -14,11 +16,13 @@ public sealed class VigemXbox360Controller : IVirtualController
     private readonly object _gate = new();
     private readonly ViGEmClient _client;
     private readonly IXbox360Controller _target;
+    private readonly ILogger<VigemXbox360Controller> _logger;
     private bool _connected;
     private bool _disposed;
 
-    public VigemXbox360Controller()
+    public VigemXbox360Controller(ILogger<VigemXbox360Controller>? logger = null)
     {
+        _logger = logger ?? NullLogger<VigemXbox360Controller>.Instance;
         ViGEmClient? client = null;
         try
         {
@@ -31,6 +35,7 @@ public sealed class VigemXbox360Controller : IVirtualController
         catch (Exception exception) when (IsDriverUnavailable(exception))
         {
             client?.Dispose();
+            _logger.LogError(exception, "ViGEmBus initialization failed. Driver unavailable.");
             throw new VigemDriverException(exception);
         }
     }
@@ -83,15 +88,18 @@ public sealed class VigemXbox360Controller : IVirtualController
                 _target.Connect();
                 _connected = true;
                 ResetReportNoLock();
+                _logger.LogInformation("Virtual Xbox 360 controller connected.");
             }
             catch (Exception exception) when (IsDriverUnavailable(exception))
             {
                 DisconnectAfterFailedConnectNoLock();
+                _logger.LogError(exception, "Virtual controller connection failed. ViGEmBus unavailable.");
                 throw new VigemDriverException(exception);
             }
-            catch
+            catch (Exception exception)
             {
                 DisconnectAfterFailedConnectNoLock();
+                _logger.LogError(exception, "Virtual controller connection failed.");
                 throw;
             }
 
@@ -112,6 +120,7 @@ public sealed class VigemXbox360Controller : IVirtualController
             }
 
             DisconnectNoLock();
+            _logger.LogInformation("Virtual Xbox 360 controller disconnected.");
             return Task.CompletedTask;
         }
     }

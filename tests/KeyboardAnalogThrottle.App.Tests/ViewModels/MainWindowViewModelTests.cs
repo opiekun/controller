@@ -104,6 +104,33 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task Dashboard_projects_live_engine_diagnostics_instead_of_static_configuration_text()
+    {
+        var engine = new BlockingEngine();
+        using var viewModel = CreateViewModel(engine);
+        engine.Publish(EmulationState.Stopped with
+        {
+            IsRunning = true,
+            IsKeyboardHookConnected = true,
+            IsControllerConnected = true,
+            ControllerAvailability = VirtualControllerAvailability.Available,
+            ActiveThrottleBinding = "Ctrl+Shift+W (fixed)",
+            ActiveBrakeBinding = "S (ratchet increase)",
+            IsThrottleCutActive = true,
+            IsInputSuppressionEnabled = true
+        });
+
+        await Task.Delay(TimeSpan.FromMilliseconds(100));
+
+        Assert.Equal("Available", viewModel.VigemBusAvailability);
+        Assert.Equal("Ctrl+Shift+W (fixed)", viewModel.ActiveThrottleBinding);
+        Assert.Equal("S (ratchet increase)", viewModel.ActiveBrakeBinding);
+        Assert.True(viewModel.IsThrottleCutActive);
+        Assert.True(viewModel.IsSuppressionEnabled);
+        Assert.DoesNotContain("Emergency:", viewModel.ActiveBindings);
+    }
+
+    [Fact]
     public async Task Controller_test_stops_normal_emulation_before_running_the_sequence()
     {
         var engine = new BlockingEngine { State = EmulationState.Stopped with { IsRunning = true } };
@@ -172,26 +199,15 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
-    public void Diagnostics_include_fixed_ratchet_cut_and_emergency_bindings()
+    public void Stopped_dashboard_diagnostics_do_not_claim_configured_bindings_are_active()
     {
         var engine = new BlockingEngine();
         using var viewModel = CreateViewModel(engine);
 
-        Assert.Contains("Throttle: W", viewModel.ActiveBindings);
-        Assert.Contains("Ctrl+W (25%)", viewModel.ActiveBindings);
-        Assert.Contains("Alt+W (50%)", viewModel.ActiveBindings);
-        Assert.Contains("Shift+W (75%)", viewModel.ActiveBindings);
-        Assert.Contains("Ctrl+Shift+W (100%)", viewModel.ActiveBindings);
-        Assert.Contains("Brake: S", viewModel.ActiveBindings);
-        Assert.Contains("Ctrl+S (25%)", viewModel.ActiveBindings);
-        Assert.Contains("Alt+S (50%)", viewModel.ActiveBindings);
-        Assert.Contains("Shift+S (75%)", viewModel.ActiveBindings);
-        Assert.Contains("Ctrl+Shift+S (100%)", viewModel.ActiveBindings);
-        Assert.Contains("increase W", viewModel.ActiveBindings);
-        Assert.Contains("decrease Q", viewModel.ActiveBindings);
-        Assert.Contains("reset Space", viewModel.ActiveBindings);
-        Assert.Contains("Throttle cut: Space", viewModel.ActiveBindings);
-        Assert.Contains("Emergency: Ctrl+Alt+F12", viewModel.ActiveBindings);
+        Assert.Equal("Throttle: None | Brake: None", viewModel.ActiveBindings);
+        Assert.False(viewModel.IsThrottleCutActive);
+        Assert.False(viewModel.IsSuppressionEnabled);
+        Assert.Equal("Unknown", viewModel.VigemBusAvailability);
     }
 
     [Fact]

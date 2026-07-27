@@ -14,12 +14,22 @@ public static class FixedBindingResolver
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(levels);
 
+        var binding = ResolveBinding(snapshot, levels);
+        return binding is { } selected ? levels[selected] : null;
+    }
+
+    public static InputBinding? ResolveBinding(
+        InputSnapshot snapshot,
+        IReadOnlyDictionary<InputBinding, double> levels)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(levels);
+
         var found = false;
         var selectedModifierCount = -1;
         var selectedBinding = default(InputBinding);
-        var selectedLevel = 0d;
 
-        foreach (var (binding, level) in levels)
+        foreach (var (binding, _) in levels)
         {
             if (!binding.Matches(snapshot))
             {
@@ -32,10 +42,9 @@ public static class FixedBindingResolver
                 found = true;
                 selectedModifierCount = binding.ModifierCount;
                 selectedBinding = binding;
-                selectedLevel = level;
             }
         }
 
-        return found ? selectedLevel : null;
+        return found ? selectedBinding : null;
     }
 }

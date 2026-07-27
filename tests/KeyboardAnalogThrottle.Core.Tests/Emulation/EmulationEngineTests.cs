@@ -3,6 +3,7 @@ using KeyboardAnalogThrottle.Core.Configuration;
 using KeyboardAnalogThrottle.Core.Emulation;
 using KeyboardAnalogThrottle.Core.Input;
 using KeyboardAnalogThrottle.Core.Tests.Fakes;
+using Microsoft.Extensions.Logging;
 
 namespace KeyboardAnalogThrottle.Core.Tests.Emulation;
 
@@ -96,6 +97,26 @@ public sealed class EmulationEngineTests
     }
 
     [Fact]
+    public async Task Logs_start_stop_and_emergency_reset_lifecycle_events()
+    {
+        var logger = new RecordingLogger<EmulationEngine>();
+        var controller = new FakeVirtualController();
+        await using var engine = new EmulationEngine(
+            AppConfiguration.CreateDefault(),
+            controller,
+            FakeKeyboardInputSource.Pressed(),
+            new FakeClock(),
+            logger: logger);
+
+        await engine.StartAsync(CancellationToken.None);
+        await engine.EmergencyResetAsync(CancellationToken.None);
+
+        Assert.Contains(logger.Messages, message => message.Contains("Emulation started", StringComparison.Ordinal));
+        Assert.Contains(logger.Messages, message => message.Contains("Emergency reset requested", StringComparison.Ordinal));
+        Assert.Contains(logger.Messages, message => message.Contains("Emulation stopped", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Does_not_write_after_the_controller_disconnects()
     {
         var clock = new FakeClock();
@@ -174,6 +195,51 @@ public sealed class EmulationEngineTests
         Assert.Equal(.08d, engine.State.RawThrottle, 6);
         Assert.Equal(.9375d, engine.State.Throttle, 6);
         Assert.Equal((byte)239, controller.RightTrigger);
+        Assert.Equal("Shift+W (fixed)", engine.State.ActiveThrottleBinding);
+        Assert.True(engine.State.IsInputSuppressionEnabled);
+    }
+
+    [Fact]
+    public async Task Dashboard_state_reports_live_ramp_cut_and_suppression_state()
+    {
+        var input = new FakeKeyboardInputSource(new InputSnapshot(
+            [InputKey.W, InputKey.Space],
+            [new KeyTransition(InputKey.W, true, 1), new KeyTransition(InputKey.Space, true, 2)]));
+        var controller = new FakeVirtualController();
+        await using var engine = CreateEngine(controller, input);
+
+        await engine.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => controller.SubmitCount == 1);
+
+        Assert.Equal("W (ramp)", engine.State.ActiveThrottleBinding);
+        Assert.Null(engine.State.ActiveBrakeBinding);
+        Assert.True(engine.State.IsThrottleCutActive);
+        Assert.True(engine.State.IsInputSuppressionEnabled);
+        Assert.Equal(VirtualControllerAvailability.Available, engine.State.ControllerAvailability);
+
+        await engine.StopAsync(CancellationToken.None);
+
+        Assert.False(engine.State.IsInputSuppressionEnabled);
+    }
+
+    [Fact]
+    public async Task Dashboard_state_reports_ratchet_binding_that_resolved_the_active_output()
+    {
+        var configuration = AppConfiguration.CreateDefault() with
+        {
+            Throttle = ChannelConfiguration.CreateThrottleDefault() with { Mode = InputMode.Ratchet }
+        };
+        var input = new FakeKeyboardInputSource(new InputSnapshot(
+            [InputKey.W],
+            [new KeyTransition(InputKey.W, true, 1)]));
+        var controller = new FakeVirtualController();
+        await using var engine = CreateEngine(controller, input, configuration: configuration);
+
+        await engine.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => controller.SubmitCount == 1);
+
+        Assert.Equal("W (ratchet increase)", engine.State.ActiveThrottleBinding);
+        Assert.Equal(.1d, engine.State.RawThrottle, 6);
     }
 
     [Fact]
@@ -246,5 +312,21 @@ public sealed class EmulationEngineTests
 
             await Task.Yield();
         }
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
     }
 }

@@ -4,6 +4,8 @@ using KeyboardAnalogThrottle.Core.Configuration;
 using KeyboardAnalogThrottle.Core.Emulation;
 using KeyboardAnalogThrottle.Core.Input;
 using KeyboardAnalogThrottle.Infrastructure.Windows.Interop;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace KeyboardAnalogThrottle.Infrastructure.Windows.Keyboard;
 
@@ -31,6 +33,7 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
     private readonly SuppressionPolicy _suppressionPolicy;
     private readonly IKeyboardHookPlatform _platform;
     private readonly IKeyboardHookThread _hookThread;
+    private readonly ILogger<LowLevelKeyboardInputSource> _logger;
     private readonly Action<KeyboardHookCallbackStage>? _callbackStage;
     private readonly CaptureSuppressedKeys _suppressedKeys = new();
     private Task? _disposal;
@@ -38,11 +41,14 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
     private int _engineIsRunning;
     private int _disposed;
 
-    public LowLevelKeyboardInputSource(AppConfiguration configuration)
+    public LowLevelKeyboardInputSource(
+        AppConfiguration configuration,
+        ILogger<LowLevelKeyboardInputSource>? logger = null)
         : this(
             configuration,
             new Win32KeyboardHookPlatform(),
-            hookThread: new KeyboardHookThread())
+            hookThread: new KeyboardHookThread(),
+            logger: logger)
     {
     }
 
@@ -50,7 +56,8 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
         AppConfiguration configuration,
         IKeyboardHookPlatform platform,
         Action<KeyboardHookCallbackStage>? callbackStage = null,
-        IKeyboardHookThread? hookThread = null)
+        IKeyboardHookThread? hookThread = null,
+        ILogger<LowLevelKeyboardInputSource>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(platform);
@@ -58,6 +65,7 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
         _platform = platform;
         _callbackStage = callbackStage;
         _hookThread = hookThread ?? new KeyboardHookThread();
+        _logger = logger ?? NullLogger<LowLevelKeyboardInputSource>.Instance;
         _hookThread.Faulted += OnHookThreadFaulted;
     }
 
@@ -89,13 +97,15 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
                 _session = await _hookThread
                     .InvokeAsync(() => InstallSession(installation))
                     .ConfigureAwait(false);
+                _logger.LogInformation("Keyboard hook installed.");
             }
-            catch
+            catch (Exception exception)
             {
                 installation.CloseAdmission();
                 _session = null;
                 _suppressedKeys.EndCapture(capture);
                 _stateStore.StopCapture();
+                _logger.LogError(exception, "Keyboard hook installation failed.");
                 throw;
             }
         }
@@ -120,6 +130,7 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
                 _session = null;
                 await quiescence.ConfigureAwait(false);
                 _suppressedKeys.EndCapture(session.Installation.Capture);
+                _logger.LogInformation("Keyboard hook removed.");
             }
             else
             {
@@ -274,6 +285,7 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
         Volatile.Write(ref _engineIsRunning, 0);
         _suppressedKeys.EndCapture();
         _stateStore.StopCapture();
+        _logger.LogError(eventArgs.Exception, "Keyboard hook thread faulted.");
     }
 
     private static InputKey MapKey(KbdLlHookStruct nativeKey)

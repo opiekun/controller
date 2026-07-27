@@ -1,4 +1,5 @@
 using KeyboardAnalogThrottle.Core.Abstractions;
+using Microsoft.Extensions.Logging;
 
 namespace KeyboardAnalogThrottle.Infrastructure.Windows.Controller;
 
@@ -7,5 +8,12 @@ namespace KeyboardAnalogThrottle.Infrastructure.Windows.Controller;
 /// </summary>
 public sealed class VigemControllerFactory
 {
-    public IVirtualController Create() => new VigemXbox360Controller();
+    private readonly ILogger<VigemXbox360Controller> _logger;
+
+    public VigemControllerFactory(ILogger<VigemXbox360Controller> logger)
+    {
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    }
+
+    public IVirtualController Create() => new VigemXbox360Controller(_logger);
 }

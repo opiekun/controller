@@ -5,6 +5,8 @@ using KeyboardAnalogThrottle.Core.Curves;
 using KeyboardAnalogThrottle.Core.Input;
 using KeyboardAnalogThrottle.Core.Output;
 using KeyboardAnalogThrottle.Core.Strategies;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace KeyboardAnalogThrottle.Core.Emulation;
 
@@ -19,6 +21,7 @@ public sealed class EmulationEngine : IEmulationEngine
     private readonly IVirtualController _controller;
     private readonly IKeyboardInputSource _input;
     private readonly IClock _clock;
+    private readonly ILogger<EmulationEngine> _logger;
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly IInputStrategy _throttleStrategy;
     private readonly IInputStrategy _brakeStrategy;
@@ -29,11 +32,23 @@ public sealed class EmulationEngine : IEmulationEngine
     private readonly InputBinding _emergencyBinding;
     private readonly IReadOnlyDictionary<InputBinding, double> _throttleFixedLevels;
     private readonly IReadOnlyDictionary<InputBinding, double> _brakeFixedLevels;
+    private readonly IReadOnlyDictionary<InputBinding, string> _throttleFixedLabels;
+    private readonly IReadOnlyDictionary<InputBinding, string> _brakeFixedLabels;
     private readonly CurveKind _throttleCurve;
     private readonly CurveKind _brakeCurve;
     private readonly ConflictMode _conflictMode;
     private readonly bool _simultaneousInputEnabled;
     private readonly bool _toggleThrottleCut;
+    private readonly string _throttleRampLabel;
+    private readonly string _throttleFixedLabel;
+    private readonly string _brakeRampLabel;
+    private readonly string _brakeFixedLabel;
+    private readonly string _ratchetIncreaseLabel;
+    private readonly string _ratchetDecreaseLabel;
+    private readonly string _ratchetResetLabel;
+    private readonly InputBinding _ratchetIncreaseBinding;
+    private readonly InputBinding _ratchetDecreaseBinding;
+    private readonly InputBinding _ratchetResetBinding;
 
     private CancellationTokenSource? _loopCancellation;
     private Task? _loopTask;
@@ -42,9 +57,12 @@ public sealed class EmulationEngine : IEmulationEngine
     private bool _disposed;
     private double _rawThrottle;
     private double _rawBrake;
+    private string? _activeThrottleBinding;
+    private string? _activeBrakeBinding;
     private (byte Right, byte Left)? _lastReport;
     private TimeSpan? _unhealthySince;
     private TimeSpan? _lastUiPublication;
+    private TimeSpan? _lastLoopDelayLog;
     private EmulationState _state = EmulationState.Stopped;
 
     public EmulationEngine(
@@ -54,12 +72,14 @@ public sealed class EmulationEngine : IEmulationEngine
         IClock clock,
         ConflictMode? conflictMode = null,
         bool? simultaneousInputEnabled = null,
-        bool? toggleThrottleCut = null)
+        bool? toggleThrottleCut = null,
+        ILogger<EmulationEngine>? logger = null)
     {
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _controller = controller ?? throw new ArgumentNullException(nameof(controller));
         _input = input ?? throw new ArgumentNullException(nameof(input));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+        _logger = logger ?? NullLogger<EmulationEngine>.Instance;
         _conflictMode = conflictMode ?? configuration.Controller.ConflictMode;
         _simultaneousInputEnabled = simultaneousInputEnabled ?? configuration.Controller.AllowSimultaneousThrottleAndBrake;
         _toggleThrottleCut = toggleThrottleCut ?? configuration.Input.ThrottleCutMode == ThrottleCutMode.Toggle;
@@ -70,10 +90,23 @@ public sealed class EmulationEngine : IEmulationEngine
         _emergencyBinding = BindingParser.Parse(configuration.Input.EmergencyDisableBinding);
         _throttleFixedLevels = ParseFixedLevels(configuration.Throttle.FixedLevels);
         _brakeFixedLevels = ParseFixedLevels(configuration.Brake.FixedLevels);
+        _throttleFixedLabels = CreateBindingLabels(_throttleFixedLevels);
+        _brakeFixedLabels = CreateBindingLabels(_brakeFixedLevels);
         _throttleCurve = ParseCurve(configuration.Throttle.Curve);
         _brakeCurve = ParseCurve(configuration.Brake.Curve);
         _throttleStrategy = CreateStrategy(configuration.Throttle, configuration.Ratchet);
         _brakeStrategy = CreateStrategy(configuration.Brake, configuration.Ratchet);
+        _throttleRampLabel = $"{_throttleBinding} (ramp)";
+        _throttleFixedLabel = $"{_throttleBinding} (fixed)";
+        _brakeRampLabel = $"{_brakeBinding} (ramp)";
+        _brakeFixedLabel = $"{_brakeBinding} (fixed)";
+        _ratchetIncreaseBinding = BindingParser.Parse(configuration.Ratchet.IncreaseBinding);
+        _ratchetDecreaseBinding = BindingParser.Parse(configuration.Ratchet.DecreaseBinding);
+        _ratchetResetBinding = BindingParser.Parse(configuration.Ratchet.ResetBinding);
+        _ratchetIncreaseLabel = $"{_ratchetIncreaseBinding} (ratchet increase)";
+        _ratchetDecreaseLabel = $"{_ratchetDecreaseBinding} (ratchet decrease)";
+        _ratchetResetLabel = $"{_ratchetResetBinding} (ratchet reset)";
+        _state = EmulationState.Stopped with { ControllerAvailability = VirtualControllerAvailability.Available };
     }
 
     public EmulationState State => Volatile.Read(ref _state);
@@ -110,13 +143,16 @@ public sealed class EmulationEngine : IEmulationEngine
                 _unhealthySince = null;
                 _throttleCut.Reset();
                 _loopCancellation = new CancellationTokenSource();
-                Publish(new EmulationState(true, 0d, 0d, 0d, 0d, 0, 0, ReadInputHealth(), null, true, true), force: true);
+                Publish(new EmulationState(true, 0d, 0d, 0d, 0d, 0, 0, ReadInputHealth(), null, true, true,
+                    null, null, false, _configuration.Input.SuppressMappedKeys, VirtualControllerAvailability.Available), force: true);
                 _loopTask = Task.Run(() => RunLoopAsync(_loopCancellation.Token));
+                _logger.LogInformation("Emulation started.");
             }
             catch (Exception exception)
             {
                 await CleanupStartedResourcesAsync(inputStarted).ConfigureAwait(false);
                 Publish(StoppedWithFault(CreateFault(FaultKindFor(exception), exception)), force: true);
+                _logger.LogError(exception, "Emulation start failed.");
                 throw;
             }
         }
@@ -158,6 +194,7 @@ public sealed class EmulationEngine : IEmulationEngine
             {
                 await CleanupStartedResourcesAsync(inputStarted: true).ConfigureAwait(false);
                 Publish(StoppedWithFault(null), force: true);
+                _logger.LogInformation("Emulation stopped.");
             }
         }
         finally
@@ -167,7 +204,11 @@ public sealed class EmulationEngine : IEmulationEngine
         }
     }
 
-    public Task EmergencyResetAsync(CancellationToken cancellationToken) => StopAsync(cancellationToken);
+    public Task EmergencyResetAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogWarning("Emergency reset requested.");
+        return StopAsync(cancellationToken);
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -194,8 +235,10 @@ public sealed class EmulationEngine : IEmulationEngine
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var timestamp = _clock.GetTimestamp();
-                var elapsed = ClampElapsed(timestamp - previousTimestamp);
+                var measuredElapsed = timestamp - previousTimestamp;
+                var elapsed = ClampElapsed(measuredElapsed);
                 previousTimestamp = timestamp;
+                LogDelayedLoop(timestamp, measuredElapsed);
                 ProcessFrame(timestamp, elapsed);
                 await _clock.DelayAsync(frameInterval, cancellationToken).ConfigureAwait(false);
             }
@@ -206,6 +249,7 @@ public sealed class EmulationEngine : IEmulationEngine
         }
         catch (Exception exception)
         {
+            _logger.LogError(exception, "Emulation loop faulted.");
             await StopAfterFaultAsync(exception).ConfigureAwait(false);
         }
     }
@@ -218,6 +262,7 @@ public sealed class EmulationEngine : IEmulationEngine
             _unhealthySince ??= timestamp;
             if (timestamp - _unhealthySince >= TimeSpan.FromMilliseconds(_configuration.Controller.InputLossTimeoutMilliseconds))
             {
+                _logger.LogError("Keyboard input health {InputHealth} exceeded input-loss timeout.", health);
                 throw new InputHealthException(health);
             }
 
@@ -229,6 +274,7 @@ public sealed class EmulationEngine : IEmulationEngine
         var snapshot = ReadInputSnapshot();
         if (_emergencyBinding.Matches(snapshot))
         {
+            _logger.LogWarning("Emergency disable hotkey activated.");
             _loopCancellation?.Cancel();
             _ = Task.Run(() => EmergencyResetAsync(CancellationToken.None));
             return;
@@ -239,6 +285,22 @@ public sealed class EmulationEngine : IEmulationEngine
 
         var fixedThrottle = ResolveFixedOutput(snapshot, _throttleBinding, _throttleFixedLevels, _rawThrottle, _configuration.Throttle);
         var fixedBrake = ResolveFixedOutput(snapshot, _brakeBinding, _brakeFixedLevels, _rawBrake, _configuration.Brake);
+        _activeThrottleBinding = ResolveActiveBinding(
+            snapshot,
+            _configuration.Throttle,
+            _throttleBinding,
+            _throttleFixedLabels,
+            _throttleRampLabel,
+            _throttleFixedLabel,
+            _activeThrottleBinding);
+        _activeBrakeBinding = ResolveActiveBinding(
+            snapshot,
+            _configuration.Brake,
+            _brakeBinding,
+            _brakeFixedLabels,
+            _brakeRampLabel,
+            _brakeFixedLabel,
+            _activeBrakeBinding);
         var throttle = _throttleCut.Resolve(snapshot, _cutBinding, fixedThrottle, _toggleThrottleCut);
         var resolved = ConflictResolver.Resolve(
             snapshot,
@@ -255,7 +317,9 @@ public sealed class EmulationEngine : IEmulationEngine
 
         ThrowIfControllerUnavailable();
         SubmitChangedReport(right, left);
-        Publish(new EmulationState(true, _rawThrottle, _rawBrake, throttle, brake, right, left, health, null, true, true), force: false);
+        Publish(new EmulationState(true, _rawThrottle, _rawBrake, throttle, brake, right, left, health, null, true, true,
+            _activeThrottleBinding, _activeBrakeBinding, _throttleCut.IsActive, _configuration.Input.SuppressMappedKeys,
+            VirtualControllerAvailability.Available), force: false);
     }
 
     private async Task StopAfterFaultAsync(Exception exception)
@@ -273,6 +337,7 @@ public sealed class EmulationEngine : IEmulationEngine
             var kind = FaultKindFor(exception);
             await CleanupStartedResourcesAsync(inputStarted: true).ConfigureAwait(false);
             Publish(StoppedWithFault(CreateFault(kind, exception)), force: true);
+            _logger.LogError(exception, "Emulation stopped after {FaultKind} fault.", kind);
         }
         finally
         {
@@ -318,6 +383,8 @@ public sealed class EmulationEngine : IEmulationEngine
             _lastReport = null;
             _rawThrottle = 0d;
             _rawBrake = 0d;
+            _activeThrottleBinding = null;
+            _activeBrakeBinding = null;
             _unhealthySince = null;
             _throttleCut.Reset();
         }
@@ -420,7 +487,8 @@ public sealed class EmulationEngine : IEmulationEngine
     }
 
     private EmulationState StoppedWithFault(EmulationFault? fault) => new(
-        false, 0d, 0d, 0d, 0d, 0, 0, ReadInputHealthForState(), fault, false, false);
+        false, 0d, 0d, 0d, 0d, 0, 0, ReadInputHealthForState(), fault, false, false,
+        null, null, false, false, VirtualControllerAvailability.Available);
 
     private InputHealth ReadInputHealth()
     {
@@ -469,6 +537,22 @@ public sealed class EmulationEngine : IEmulationEngine
         return elapsed > maximum ? maximum : elapsed;
     }
 
+    private void LogDelayedLoop(TimeSpan timestamp, TimeSpan measuredElapsed)
+    {
+        var maximum = TimeSpan.FromMilliseconds(_configuration.Controller.MaximumFrameDeltaMilliseconds);
+        if (measuredElapsed <= maximum ||
+            _lastLoopDelayLog is { } previous && timestamp - previous < TimeSpan.FromSeconds(5))
+        {
+            return;
+        }
+
+        _lastLoopDelayLog = timestamp;
+        _logger.LogWarning(
+            "Emulation update loop delay of {MeasuredMilliseconds} ms exceeded configured maximum of {MaximumMilliseconds} ms.",
+            measuredElapsed.TotalMilliseconds,
+            maximum.TotalMilliseconds);
+    }
+
     private static IInputStrategy CreateStrategy(ChannelConfiguration channel, RatchetConfiguration ratchet) => channel.Mode switch
     {
         InputMode.Ramp => new RampInputStrategy(),
@@ -484,6 +568,9 @@ public sealed class EmulationEngine : IEmulationEngine
 
     private static IReadOnlyDictionary<InputBinding, double> ParseFixedLevels(IReadOnlyDictionary<string, double> levels) =>
         levels.ToDictionary(static entry => BindingParser.Parse(entry.Key), static entry => entry.Value);
+
+    private static IReadOnlyDictionary<InputBinding, string> CreateBindingLabels(IReadOnlyDictionary<InputBinding, double> levels) =>
+        levels.Keys.ToDictionary(static binding => binding, static binding => $"{binding} (fixed)");
 
     private static double ResolveFixedOutput(
         InputSnapshot snapshot,
@@ -506,6 +593,55 @@ public sealed class EmulationEngine : IEmulationEngine
         var maximum = double.IsFinite(channel.MaximumLevel) ? Math.Clamp(channel.MaximumLevel, 0d, 1d) : 0d;
         var normalized = double.IsFinite(fixedLevel.Value) ? Math.Clamp(fixedLevel.Value, 0d, 1d) : 0d;
         return Math.Min(normalized, maximum);
+    }
+
+    private string? ResolveActiveBinding(
+        InputSnapshot snapshot,
+        ChannelConfiguration channel,
+        InputBinding primaryBinding,
+        IReadOnlyDictionary<InputBinding, string> fixedLabels,
+        string rampLabel,
+        string fixedLabel,
+        string? currentRatchetBinding)
+    {
+        if (channel.Mode == InputMode.Ratchet)
+        {
+            var transitions = snapshot.Transitions;
+            for (var index = 0; index < transitions.Count; index++)
+            {
+                var transition = transitions[index];
+                if (_ratchetIncreaseBinding.Matches(transition))
+                {
+                    return _ratchetIncreaseLabel;
+                }
+
+                if (_ratchetDecreaseBinding.Matches(transition))
+                {
+                    return _ratchetDecreaseLabel;
+                }
+
+                if (_ratchetResetBinding.Matches(transition))
+                {
+                    return _ratchetResetLabel;
+                }
+            }
+
+            return currentRatchetBinding;
+        }
+
+        if (!primaryBinding.Matches(snapshot))
+        {
+            return null;
+        }
+
+        var fixedBinding = FixedBindingResolver.ResolveBinding(snapshot,
+            ReferenceEquals(channel, _configuration.Throttle) ? _throttleFixedLevels : _brakeFixedLevels);
+        if (fixedBinding is { } selected && fixedLabels.TryGetValue(selected, out var fixedLabelForBinding))
+        {
+            return fixedLabelForBinding;
+        }
+
+        return channel.Mode == InputMode.Fixed ? fixedLabel : rampLabel;
     }
 
     private static EmulationFault CreateFault(EmulationFaultKind kind, Exception exception) =>
