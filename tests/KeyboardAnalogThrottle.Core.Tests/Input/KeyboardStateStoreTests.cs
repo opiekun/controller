@@ -36,7 +36,24 @@ public sealed class KeyboardStateStoreTests
             transition => Assert.Equal(new KeyTransition(InputKey.W, false, 2), transition));
         Assert.False(snapshot.IsPressed(InputKey.W));
         Assert.Equal(2, snapshot.TransitionSequence(InputKey.W));
+        Assert.Equal(1, snapshot.KeyDownSequence(InputKey.W));
         Assert.Empty(store.GetSnapshot().Transitions);
+    }
+
+    [Fact]
+    public void Snapshot_retains_last_key_down_sequence_after_a_later_key_up()
+    {
+        var store = new KeyboardStateStore();
+
+        store.ApplyDown(InputKey.W);
+        store.ApplyDown(InputKey.S);
+        store.ApplyUp(InputKey.W);
+
+        var snapshot = store.GetSnapshot();
+
+        Assert.Equal(3, snapshot.TransitionSequence(InputKey.W));
+        Assert.Equal(1, snapshot.KeyDownSequence(InputKey.W));
+        Assert.Equal(2, snapshot.KeyDownSequence(InputKey.S));
     }
 
     [Fact]

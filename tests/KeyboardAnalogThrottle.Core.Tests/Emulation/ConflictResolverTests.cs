@@ -95,6 +95,38 @@ public sealed class ConflictResolverTests
     }
 
     [Fact]
+    public void Last_pressed_uses_base_key_down_sequence_when_throttle_release_is_newer()
+    {
+        var input = new InputSnapshot(
+            [InputKey.S],
+            [
+                new KeyTransition(InputKey.W, true, 1),
+                new KeyTransition(InputKey.S, true, 2),
+                new KeyTransition(InputKey.W, false, 3)
+            ]);
+
+        var result = ConflictResolver.Resolve(input, .4, .6, InputKey.W, InputKey.S, ConflictMode.LastPressedWins);
+
+        Assert.Equal((0d, .6d), result);
+    }
+
+    [Fact]
+    public void Last_pressed_uses_base_key_down_sequence_when_brake_release_is_newer()
+    {
+        var input = new InputSnapshot(
+            [InputKey.W],
+            [
+                new KeyTransition(InputKey.S, true, 1),
+                new KeyTransition(InputKey.W, true, 2),
+                new KeyTransition(InputKey.S, false, 3)
+            ]);
+
+        var result = ConflictResolver.Resolve(input, .6, .4, InputKey.W, InputKey.S, ConflictMode.LastPressedWins);
+
+        Assert.Equal((.6d, 0d), result);
+    }
+
+    [Fact]
     public void Leaves_values_unchanged_when_simultaneous_input_is_enabled()
     {
         var input = new InputSnapshot([InputKey.W, InputKey.S], []);

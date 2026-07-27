@@ -8,6 +8,7 @@ public sealed class InputSnapshot
     private readonly HashSet<InputKey> _pressedKeys;
     private readonly HashSet<InputKey> _pressedThisFrame;
     private readonly Dictionary<InputKey, long> _transitionSequences;
+    private readonly Dictionary<InputKey, long> _keyDownSequences;
     private readonly Dictionary<InputKey, InputModifiers> _transitionModifiers;
     private readonly KeyTransition[] _transitions;
 
@@ -16,7 +17,8 @@ public sealed class InputSnapshot
     public InputSnapshot(
         IEnumerable<InputKey> pressedKeys,
         IEnumerable<KeyTransition> transitions,
-        IReadOnlyDictionary<InputKey, long>? transitionSequences = null)
+        IReadOnlyDictionary<InputKey, long>? transitionSequences = null,
+        IReadOnlyDictionary<InputKey, long>? keyDownSequences = null)
     {
         ArgumentNullException.ThrowIfNull(pressedKeys);
         ArgumentNullException.ThrowIfNull(transitions);
@@ -24,6 +26,7 @@ public sealed class InputSnapshot
         _pressedKeys = new HashSet<InputKey>(pressedKeys);
         _pressedThisFrame = new HashSet<InputKey>();
         _transitionSequences = new Dictionary<InputKey, long>();
+        _keyDownSequences = new Dictionary<InputKey, long>();
         _transitionModifiers = new Dictionary<InputKey, InputModifiers>();
         var capturedTransitions = new List<KeyTransition>();
 
@@ -35,6 +38,18 @@ public sealed class InputSnapshot
             }
         }
 
+        // The legacy sequence map represents the last distinct transition. When a
+        // caller has no separate key-down history, it is also the best available
+        // baseline for the last key-down history.
+        var downSequenceSource = keyDownSequences ?? transitionSequences;
+        if (downSequenceSource is not null)
+        {
+            foreach (var (key, sequence) in downSequenceSource)
+            {
+                _keyDownSequences[key] = sequence;
+            }
+        }
+
         foreach (var transition in transitions)
         {
             capturedTransitions.Add(transition);
@@ -43,6 +58,7 @@ public sealed class InputSnapshot
             {
                 _pressedThisFrame.Add(transition.Key);
                 _transitionModifiers[transition.Key] = transition.Modifiers;
+                _keyDownSequences[transition.Key] = transition.Sequence;
             }
         }
 
@@ -84,6 +100,13 @@ public sealed class InputSnapshot
 
     public long TransitionSequence(InputKey key) =>
         _transitionSequences.TryGetValue(key, out var sequence) ? sequence : 0;
+
+    /// <summary>
+    /// Gets the sequence of the most recent distinct physical key-down transition.
+    /// Key-up transitions deliberately do not replace this value.
+    /// </summary>
+    public long KeyDownSequence(InputKey key) =>
+        _keyDownSequences.TryGetValue(key, out var sequence) ? sequence : 0;
 
     /// <summary>
     /// Gets the normalized modifier flags captured with a key-down transition in this frame.

@@ -40,8 +40,8 @@ public static class ConflictResolver
         InputKey throttleKey,
         InputKey brakeKey)
     {
-        var throttleSequence = input.TransitionSequence(throttleKey);
-        var brakeSequence = input.TransitionSequence(brakeKey);
+        var throttleSequence = input.KeyDownSequence(throttleKey);
+        var brakeSequence = input.KeyDownSequence(brakeKey);
 
         return throttleSequence > brakeSequence ? (throttle, 0d)
             : brakeSequence > throttleSequence ? (0d, brake)

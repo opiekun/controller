@@ -13,6 +13,7 @@ public sealed class KeyboardStateStore
     private readonly HashSet<InputKey> _pressedKeys = [];
     private readonly List<KeyTransition> _pendingTransitions = [];
     private readonly Dictionary<InputKey, long> _transitionSequences = [];
+    private readonly Dictionary<InputKey, long> _keyDownSequences = [];
     private long _sequence;
     private long _captureGeneration;
     private long _suppressionPressedKeyMask;
@@ -90,7 +91,11 @@ public sealed class KeyboardStateStore
     {
         lock (_gate)
         {
-            var snapshot = new InputSnapshot(_pressedKeys, _pendingTransitions, _transitionSequences);
+            var snapshot = new InputSnapshot(
+                _pressedKeys,
+                _pendingTransitions,
+                _transitionSequences,
+                _keyDownSequences);
             _pendingTransitions.Clear();
             return snapshot;
         }
@@ -164,6 +169,10 @@ public sealed class KeyboardStateStore
             PublishSuppressionStateUnsafe();
             var transition = new KeyTransition(key, isDown, ++_sequence, modifiers);
             _transitionSequences[key] = transition.Sequence;
+            if (isDown)
+            {
+                _keyDownSequences[key] = transition.Sequence;
+            }
             _pendingTransitions.Add(transition);
             return new KeyStateChangedEventArgs(transition);
         }
@@ -174,6 +183,7 @@ public sealed class KeyboardStateStore
         _pressedKeys.Clear();
         _pendingTransitions.Clear();
         _transitionSequences.Clear();
+        _keyDownSequences.Clear();
         _sequence = 0;
         _health = health;
         _lastHeartbeatTimestamp = Stopwatch.GetTimestamp();
