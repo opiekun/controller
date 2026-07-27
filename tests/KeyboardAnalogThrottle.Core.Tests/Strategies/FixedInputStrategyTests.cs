@@ -7,14 +7,34 @@ namespace KeyboardAnalogThrottle.Core.Tests.Strategies;
 public sealed class FixedInputStrategyTests
 {
     [Fact]
-    public void Selects_the_base_level_without_ramping()
+    public void Selects_configured_maximum_level_for_bare_primary_binding()
     {
         var strategy = new FixedInputStrategy();
-        var configuration = ChannelConfiguration.DefaultThrottle with { InitialLevel = .3 };
+        var configuration = ChannelConfiguration.DefaultThrottle with
+        {
+            InitialLevel = .3,
+            MaximumLevel = .85
+        };
 
         var value = strategy.Update(new InputSnapshot([InputKey.W], []), .95, TimeSpan.FromSeconds(5), configuration);
 
-        Assert.Equal(.3, value, 6);
+        Assert.Equal(.85, value, 6);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Default_fixed_mode_uses_full_level_for_bare_primary_binding(bool throttle)
+    {
+        var strategy = new FixedInputStrategy();
+        var configuration = throttle
+            ? ChannelConfiguration.DefaultThrottle with { Mode = InputMode.Fixed }
+            : ChannelConfiguration.DefaultBrake with { Mode = InputMode.Fixed };
+        var primaryKey = throttle ? InputKey.W : InputKey.S;
+
+        var value = strategy.Update(new InputSnapshot([primaryKey], []), 0d, TimeSpan.Zero, configuration);
+
+        Assert.Equal(1d, value, 6);
     }
 
     [Fact]

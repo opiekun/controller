@@ -22,6 +22,20 @@ public static class ConfigurationValidator
         ValidateRequiredSection("Brake", configuration.Brake, errors, (channel, validationErrors) => ValidateChannel("Brake", channel, validationErrors));
         ValidateRequiredSection("Ratchet", configuration.Ratchet, errors, ValidateRatchet);
         ValidateRequiredSection("Logging", configuration.Logging, errors, ValidateLogging);
+
+        if (configuration.Input is not null &&
+            configuration.Throttle is not null &&
+            configuration.Brake is not null &&
+            configuration.Ratchet is not null)
+        {
+            ValidateEmergencyDisableBindingConflicts(
+                configuration.Input,
+                configuration.Throttle,
+                configuration.Brake,
+                configuration.Ratchet,
+                errors);
+        }
+
         return errors;
     }
 
@@ -172,6 +186,68 @@ public static class ConfigurationValidator
         }
     }
 
+    private static void ValidateEmergencyDisableBindingConflicts(
+        InputConfiguration input,
+        ChannelConfiguration throttle,
+        ChannelConfiguration brake,
+        RatchetConfiguration ratchet,
+        ICollection<ConfigurationValidationError> errors)
+    {
+        if (!TryParseBinding(input.EmergencyDisableBinding, out var emergencyBinding))
+        {
+            return;
+        }
+
+        ValidateEmergencyDisableBindingConflict(emergencyBinding, input.EmergencyDisableBinding, "Throttle.PrimaryBinding", throttle.PrimaryBinding, errors);
+        ValidateEmergencyDisableBindingConflict(emergencyBinding, input.EmergencyDisableBinding, "Brake.PrimaryBinding", brake.PrimaryBinding, errors);
+        ValidateFixedLevelEmergencyDisableBindingConflicts(emergencyBinding, input.EmergencyDisableBinding, "Throttle.FixedLevels", throttle.FixedLevels, errors);
+        ValidateFixedLevelEmergencyDisableBindingConflicts(emergencyBinding, input.EmergencyDisableBinding, "Brake.FixedLevels", brake.FixedLevels, errors);
+        ValidateEmergencyDisableBindingConflict(emergencyBinding, input.EmergencyDisableBinding, "Ratchet.IncreaseBinding", ratchet.IncreaseBinding, errors);
+        ValidateEmergencyDisableBindingConflict(emergencyBinding, input.EmergencyDisableBinding, "Ratchet.DecreaseBinding", ratchet.DecreaseBinding, errors);
+        ValidateEmergencyDisableBindingConflict(emergencyBinding, input.EmergencyDisableBinding, "Ratchet.ResetBinding", ratchet.ResetBinding, errors);
+        ValidateEmergencyDisableBindingConflict(emergencyBinding, input.EmergencyDisableBinding, "Input.ThrottleCutBinding", input.ThrottleCutBinding, errors);
+    }
+
+    private static void ValidateFixedLevelEmergencyDisableBindingConflicts(
+        InputBinding emergencyBinding,
+        string emergencyBindingText,
+        string propertyName,
+        IReadOnlyDictionary<string, double>? fixedLevels,
+        ICollection<ConfigurationValidationError> errors)
+    {
+        if (fixedLevels is null)
+        {
+            return;
+        }
+
+        foreach (var fixedLevel in fixedLevels)
+        {
+            ValidateEmergencyDisableBindingConflict(
+                emergencyBinding,
+                emergencyBindingText,
+                propertyName,
+                fixedLevel.Key,
+                errors);
+        }
+    }
+
+    private static void ValidateEmergencyDisableBindingConflict(
+        InputBinding emergencyBinding,
+        string emergencyBindingText,
+        string mappedPropertyName,
+        string? mappedBindingText,
+        ICollection<ConfigurationValidationError> errors)
+    {
+        if (!TryParseBinding(mappedBindingText, out var mappedBinding) || emergencyBinding != mappedBinding)
+        {
+            return;
+        }
+
+        errors.Add(new(
+            "Input.EmergencyDisableBinding",
+            $"Emergency disable binding '{emergencyBindingText}' conflicts with mapped output binding '{mappedBindingText}' ({mappedPropertyName})."));
+    }
+
     private static void ValidateBinding(string propertyName, string binding, ICollection<ConfigurationValidationError> errors)
     {
         if (!TryParseStructuralBinding(binding, out _))
@@ -197,6 +273,18 @@ public static class ConfigurationValidator
     private static bool TryParseStructuralBinding(string? binding, out string canonicalBinding)
     {
         canonicalBinding = string.Empty;
+        if (!TryParseBinding(binding, out var parsedBinding))
+        {
+            return false;
+        }
+
+        canonicalBinding = parsedBinding.ToString();
+        return true;
+    }
+
+    private static bool TryParseBinding(string? binding, out InputBinding parsedBinding)
+    {
+        parsedBinding = default;
         if (string.IsNullOrWhiteSpace(binding))
         {
             return false;
@@ -204,7 +292,7 @@ public static class ConfigurationValidator
 
         try
         {
-            canonicalBinding = BindingParser.Parse(binding).ToString();
+            parsedBinding = BindingParser.Parse(binding);
             return true;
         }
         catch (ArgumentException)

@@ -24,7 +24,7 @@ public sealed class FixedInputStrategy : IInputStrategy
         }
 
         var selected = FixedBindingResolver.Resolve(input, prepared.Levels);
-        var level = selected ?? configuration.InitialLevel;
+        var level = selected ?? configuration.MaximumLevel;
         var maximum = Normalize(configuration.MaximumLevel);
         return Math.Min(maximum, Normalize(level));
     }

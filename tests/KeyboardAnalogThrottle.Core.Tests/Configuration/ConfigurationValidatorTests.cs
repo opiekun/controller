@@ -209,6 +209,45 @@ public sealed class ConfigurationValidatorTests
         Assert.Empty(ConfigurationValidator.Validate(AppConfiguration.CreateDefault()));
     }
 
+    [Theory]
+    [InlineData("W", "Throttle.PrimaryBinding", "W")]
+    [InlineData("Ctrl+W", "Throttle.FixedLevels", "Ctrl+W")]
+    [InlineData("S", "Brake.PrimaryBinding", "S")]
+    [InlineData("Ctrl+S", "Brake.FixedLevels", "Ctrl+S")]
+    [InlineData("Q", "Ratchet.DecreaseBinding", "Q")]
+    [InlineData("Space", "Input.ThrottleCutBinding", "Space")]
+    public void Rejects_emergency_disable_binding_that_conflicts_with_mapped_output_binding(
+        string emergencyBinding,
+        string mappedProperty,
+        string mappedBinding)
+    {
+        var defaults = AppConfiguration.CreateDefault();
+        var configuration = defaults with
+        {
+            Input = defaults.Input with { EmergencyDisableBinding = emergencyBinding }
+        };
+
+        Assert.Contains(
+            ConfigurationValidator.Validate(configuration),
+            error => error.PropertyName == "Input.EmergencyDisableBinding" &&
+                     error.Message == $"Emergency disable binding '{emergencyBinding}' conflicts with mapped output binding '{mappedBinding}' ({mappedProperty}).");
+    }
+
+    [Fact]
+    public void Rejects_emergency_disable_binding_structurally_equivalent_to_a_mapped_output_binding()
+    {
+        var defaults = AppConfiguration.CreateDefault();
+        var configuration = defaults with
+        {
+            Input = defaults.Input with { EmergencyDisableBinding = "LeftControl+Shift+W" }
+        };
+
+        Assert.Contains(
+            ConfigurationValidator.Validate(configuration),
+            error => error.PropertyName == "Input.EmergencyDisableBinding" &&
+                     error.Message == "Emergency disable binding 'LeftControl+Shift+W' conflicts with mapped output binding 'Ctrl+Shift+W' (Throttle.FixedLevels).");
+    }
+
     [Fact]
     public void Default_configuration_matches_the_racing_controls()
     {
