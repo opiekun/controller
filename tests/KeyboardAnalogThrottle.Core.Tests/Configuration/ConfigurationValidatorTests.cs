@@ -1,4 +1,5 @@
 using KeyboardAnalogThrottle.Core.Configuration;
+using KeyboardAnalogThrottle.Core.Emulation;
 
 namespace KeyboardAnalogThrottle.Core.Tests.Configuration;
 
@@ -209,6 +210,69 @@ public sealed class ConfigurationValidatorTests
     }
 
     [Fact]
+    public void Default_configuration_matches_the_racing_controls()
+    {
+        var configuration = AppConfiguration.CreateDefault();
+
+        Assert.True(configuration.Input.SuppressMappedKeys);
+        Assert.True(configuration.Controller.AllowSimultaneousThrottleAndBrake);
+        Assert.Equal(ConflictMode.BrakeWins, configuration.Controller.ConflictMode);
+        Assert.Equal(ThrottleCutMode.Hold, configuration.Input.ThrottleCutMode);
+        Assert.Equal("W", configuration.Throttle.PrimaryBinding);
+        Assert.Equal(InputMode.Ramp, configuration.Throttle.Mode);
+        Assert.Equal(1.2d, configuration.Throttle.RiseSeconds);
+        Assert.Equal(.45d, configuration.Throttle.FallSeconds);
+        Assert.Equal(.08d, configuration.Throttle.InitialLevel);
+        Assert.Equal(1d, configuration.Throttle.MaximumLevel);
+        Assert.Equal("EaseOut", configuration.Throttle.Curve);
+        AssertFixedLevels(configuration.Throttle, "W");
+        Assert.Equal("S", configuration.Brake.PrimaryBinding);
+        Assert.Equal(InputMode.Ramp, configuration.Brake.Mode);
+        Assert.Equal(.3d, configuration.Brake.RiseSeconds);
+        Assert.Equal(.2d, configuration.Brake.FallSeconds);
+        Assert.Equal(0d, configuration.Brake.InitialLevel);
+        Assert.Equal(1d, configuration.Brake.MaximumLevel);
+        Assert.Equal("Linear", configuration.Brake.Curve);
+        AssertFixedLevels(configuration.Brake, "S");
+        Assert.Equal("W", configuration.Ratchet.IncreaseBinding);
+        Assert.Equal("Q", configuration.Ratchet.DecreaseBinding);
+        Assert.Equal("Space", configuration.Ratchet.ResetBinding);
+        Assert.Equal(.1d, configuration.Ratchet.Step);
+    }
+
+    [Theory]
+    [InlineData((ConflictMode)999)]
+    [InlineData((ConflictMode)(-1))]
+    public void Rejects_undefined_conflict_modes(ConflictMode conflictMode)
+    {
+        var defaults = AppConfiguration.CreateDefault();
+        var configuration = defaults with
+        {
+            Controller = defaults.Controller with { ConflictMode = conflictMode }
+        };
+
+        Assert.Contains(
+            ConfigurationValidator.Validate(configuration),
+            error => error.PropertyName == "Controller.ConflictMode" && error.Message == "Conflict mode is invalid.");
+    }
+
+    [Theory]
+    [InlineData((ThrottleCutMode)999)]
+    [InlineData((ThrottleCutMode)(-1))]
+    public void Rejects_undefined_throttle_cut_modes(ThrottleCutMode cutMode)
+    {
+        var defaults = AppConfiguration.CreateDefault();
+        var configuration = defaults with
+        {
+            Input = defaults.Input with { ThrottleCutMode = cutMode }
+        };
+
+        Assert.Contains(
+            ConfigurationValidator.Validate(configuration),
+            error => error.PropertyName == "Input.ThrottleCutMode" && error.Message == "Throttle cut mode is invalid.");
+    }
+
+    [Fact]
     public void Rejects_undefined_channel_modes()
     {
         var defaults = AppConfiguration.CreateDefault();
@@ -220,5 +284,13 @@ public sealed class ConfigurationValidatorTests
         Assert.Contains(
             ConfigurationValidator.Validate(configuration),
             error => error.PropertyName == "Throttle.Mode" && error.Message == "Throttle mode is invalid.");
+    }
+
+    private static void AssertFixedLevels(ChannelConfiguration channel, string key)
+    {
+        Assert.Equal(.25d, channel.FixedLevels[$"Ctrl+{key}"]);
+        Assert.Equal(.5d, channel.FixedLevels[$"Alt+{key}"]);
+        Assert.Equal(.75d, channel.FixedLevels[$"Shift+{key}"]);
+        Assert.Equal(1d, channel.FixedLevels[$"Ctrl+Shift+{key}"]);
     }
 }

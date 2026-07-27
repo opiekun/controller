@@ -30,21 +30,34 @@ public sealed record ChannelConfiguration
     public static ChannelConfiguration CreateThrottleDefault() => new()
     {
         PrimaryBinding = "W",
+        RiseSeconds = 1.2d,
+        FallSeconds = .45d,
+        InitialLevel = .08d,
+        MaximumLevel = 1d,
+        Curve = "EaseOut",
         FixedLevels = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
         {
-            ["Shift+W"] = .5d,
-            ["Ctrl+W"] = 1d
+            ["Ctrl+W"] = .25d,
+            ["Alt+W"] = .5d,
+            ["Shift+W"] = .75d,
+            ["Ctrl+Shift+W"] = 1d
         }
     };
 
     public static ChannelConfiguration CreateBrakeDefault() => new()
     {
         PrimaryBinding = "S",
-        RiseSeconds = .5d,
+        RiseSeconds = .3d,
+        FallSeconds = .2d,
+        InitialLevel = 0d,
+        MaximumLevel = 1d,
+        Curve = "Linear",
         FixedLevels = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
         {
-            ["Shift+S"] = .5d,
-            ["Ctrl+S"] = 1d
+            ["Ctrl+S"] = .25d,
+            ["Alt+S"] = .5d,
+            ["Shift+S"] = .75d,
+            ["Ctrl+Shift+S"] = 1d
         }
     };
 }

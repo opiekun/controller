@@ -1,4 +1,5 @@
 using KeyboardAnalogThrottle.Core.Bindings;
+using KeyboardAnalogThrottle.Core.Emulation;
 
 namespace KeyboardAnalogThrottle.Core.Configuration;
 
@@ -55,12 +56,22 @@ public static class ConfigurationValidator
         {
             errors.Add(new("Controller.InputLossTimeoutMilliseconds", "Input-loss timeout must be between 1 and 60000 milliseconds."));
         }
+
+        if (!Enum.IsDefined(controller.ConflictMode))
+        {
+            errors.Add(new("Controller.ConflictMode", "Conflict mode is invalid."));
+        }
     }
 
     private static void ValidateInput(InputConfiguration input, ICollection<ConfigurationValidationError> errors)
     {
         ValidateBinding("Input.ThrottleCutBinding", input.ThrottleCutBinding, errors);
         ValidateBinding("Input.EmergencyDisableBinding", input.EmergencyDisableBinding, errors);
+
+        if (!Enum.IsDefined(input.ThrottleCutMode))
+        {
+            errors.Add(new("Input.ThrottleCutMode", "Throttle cut mode is invalid."));
+        }
     }
 
     private static void ValidateChannel(string channelName, ChannelConfiguration channel, ICollection<ConfigurationValidationError> errors)
