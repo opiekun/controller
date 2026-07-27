@@ -51,11 +51,11 @@
                     <StackPanel>
                         <TextBlock FontSize="16" FontWeight="SemiBold" Text="Throttle" />
                         <TextBlock Margin="0,8,0,2" Text="Raw input" />
-                        <ProgressBar Height="18" Maximum="100" Value="{Binding RawThrottlePercentage}"
+                        <ProgressBar Height="18" Maximum="100" Value="{Binding RawThrottlePercentage, Mode=OneWay}"
                                      AutomationProperties.Name="Raw throttle input" />
                         <TextBlock HorizontalAlignment="Right" Text="{Binding RawThrottlePercentage, StringFormat={}{0:F1}%}" />
                         <TextBlock Margin="0,8,0,2" Text="Controller output" />
-                        <ProgressBar Height="18" Maximum="100" Value="{Binding ThrottlePercentage}"
+                        <ProgressBar Height="18" Maximum="100" Value="{Binding ThrottlePercentage, Mode=OneWay}"
                                      AutomationProperties.Name="Throttle controller output" />
                         <TextBlock HorizontalAlignment="Right" Text="{Binding ThrottlePercentage, StringFormat={}{0:F1}%}" />
                     </StackPanel>
@@ -65,11 +65,11 @@
                     <StackPanel>
                         <TextBlock FontSize="16" FontWeight="SemiBold" Text="Brake" />
                         <TextBlock Margin="0,8,0,2" Text="Raw input" />
-                        <ProgressBar Height="18" Maximum="100" Value="{Binding RawBrakePercentage}"
+                        <ProgressBar Height="18" Maximum="100" Value="{Binding RawBrakePercentage, Mode=OneWay}"
                                      AutomationProperties.Name="Raw brake input" />
                         <TextBlock HorizontalAlignment="Right" Text="{Binding RawBrakePercentage, StringFormat={}{0:F1}%}" />
                         <TextBlock Margin="0,8,0,2" Text="Controller output" />
-                        <ProgressBar Height="18" Maximum="100" Value="{Binding BrakePercentage}"
+                        <ProgressBar Height="18" Maximum="100" Value="{Binding BrakePercentage, Mode=OneWay}"
                                      AutomationProperties.Name="Brake controller output" />
                         <TextBlock HorizontalAlignment="Right" Text="{Binding BrakePercentage, StringFormat={}{0:F1}%}" />
                     </StackPanel>
