@@ -97,6 +97,27 @@ public sealed class EmulationEngineTests
     }
 
     [Fact]
+    public async Task Disposal_still_resets_disconnects_and_disposes_controller_when_input_disposal_fails()
+    {
+        var input = FakeKeyboardInputSource.Pressed(InputKey.W);
+        input.DisposeException = new InvalidOperationException("hook disposal failed");
+        var controller = new FakeVirtualController();
+        var clock = new FakeClock();
+        var engine = CreateEngine(controller, input, clock);
+
+        await engine.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => controller.RightTrigger > 0);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => engine.DisposeAsync().AsTask());
+
+        Assert.True(input.IsDisposed);
+        Assert.True(controller.IsDisposed);
+        Assert.False(controller.IsConnected);
+        Assert.Equal((byte)0, controller.RightTrigger);
+        Assert.Equal((byte)0, controller.LeftTrigger);
+        Assert.Equal(1, controller.DisconnectCount);
+    }
+
+    [Fact]
     public async Task Logs_start_stop_and_emergency_reset_lifecycle_events()
     {
         var logger = new RecordingLogger<EmulationEngine>();

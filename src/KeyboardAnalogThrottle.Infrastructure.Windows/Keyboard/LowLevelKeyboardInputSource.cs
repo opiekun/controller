@@ -39,6 +39,7 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
     private Task? _disposal;
     private KeyboardHookSession? _session;
     private int _engineIsRunning;
+    private int _hookThreadFaulted;
     private int _disposed;
 
     public LowLevelKeyboardInputSource(
@@ -124,13 +125,39 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
             var session = _session;
             if (session is not null)
             {
-                var quiescence = await _hookThread
-                    .InvokeAsync(session.CloseAdmissionAndUnhook)
-                    .ConfigureAwait(false);
-                _session = null;
-                await quiescence.ConfigureAwait(false);
-                _suppressedKeys.EndCapture(session.Installation.Capture);
-                _logger.LogInformation("Keyboard hook removed.");
+                var sessionStopped = false;
+                try
+                {
+                    if (Volatile.Read(ref _hookThreadFaulted) != 0)
+                    {
+                        await CloseFaultedSessionAsync(session).ConfigureAwait(false);
+                        sessionStopped = true;
+                    }
+                    else
+                    {
+                        var quiescence = await _hookThread
+                            .InvokeAsync(session.CloseAdmissionAndUnhook)
+                            .ConfigureAwait(false);
+                        await quiescence.ConfigureAwait(false);
+                        sessionStopped = true;
+                    }
+
+                    _logger.LogInformation("Keyboard hook removed.");
+                }
+                catch (Exception exception) when (Volatile.Read(ref _hookThreadFaulted) != 0)
+                {
+                    await CloseFaultedSessionAsync(session).ConfigureAwait(false);
+                    sessionStopped = true;
+                    _logger.LogWarning(exception, "Keyboard hook thread stopped before hook removal completed.");
+                }
+                finally
+                {
+                    if (sessionStopped)
+                    {
+                        _session = null;
+                        _suppressedKeys.EndCapture(session.Installation.Capture);
+                    }
+                }
             }
             else
             {
@@ -165,6 +192,20 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
         Interlocked.Exchange(ref _disposed, 1);
         await StopAsync(CancellationToken.None).ConfigureAwait(false);
         await _hookThread.DisposeAsync().ConfigureAwait(false);
+    }
+
+    private async Task CloseFaultedSessionAsync(KeyboardHookSession session)
+    {
+        try
+        {
+            await session.CloseAdmissionAndUnhook().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            // The hook thread has already terminated. Clear local capture state even if
+            // its registration can no longer be explicitly removed.
+            _logger.LogWarning(exception, "Unable to remove hook after hook thread failure.");
+        }
     }
 
     private KeyboardHookSession InstallSession(KeyboardHookInstallation installation)
@@ -282,6 +323,7 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
 
     private void OnHookThreadFaulted(object? sender, KeyboardHookThreadFaultedEventArgs eventArgs)
     {
+        Interlocked.Exchange(ref _hookThreadFaulted, 1);
         Volatile.Write(ref _engineIsRunning, 0);
         _suppressedKeys.EndCapture();
         _stateStore.StopCapture();

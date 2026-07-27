@@ -186,6 +186,30 @@ public sealed class LowLevelKeyboardInputSourceTests
         Assert.False(source.GetSnapshot().IsPressed(Core.Input.InputKey.W));
     }
 
+    [Fact]
+    public async Task Stop_and_dispose_are_safe_after_an_unexpected_hook_thread_exit()
+    {
+        var messageLoop = new FakeKeyboardHookMessageLoop();
+        var hookThread = new KeyboardHookThread(messageLoop);
+        var platform = new FakeKeyboardHookPlatform(PassedThrough);
+        var source = new LowLevelKeyboardInputSource(
+            Configuration(),
+            platform,
+            hookThread: hookThread);
+
+        await source.StartAsync(CancellationToken.None);
+        messageLoop.StopUnexpectedly();
+        await WaitUntilAsync(() => source.Health == InputHealth.Unavailable);
+
+        await source.StopAsync(CancellationToken.None);
+        await source.StopAsync(CancellationToken.None);
+        await source.DisposeAsync();
+        await source.DisposeAsync();
+
+        Assert.Equal(["install", "unhook"], platform.LifecycleOperations);
+        Assert.False(hookThread.IsAlive);
+    }
+
     private static AppConfiguration Configuration() => new()
     {
         Input = new InputConfiguration

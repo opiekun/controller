@@ -44,6 +44,8 @@ public sealed class FakeKeyboardInputSource : IKeyboardInputSource
 
     public Exception? HealthException { get; set; }
 
+    public Exception? DisposeException { get; set; }
+
     public Action? OnStart { get; set; }
 
     public static FakeKeyboardInputSource Pressed(params InputKey[] keys) => new(InputSnapshot.FromPressed(keys));
@@ -93,6 +95,11 @@ public sealed class FakeKeyboardInputSource : IKeyboardInputSource
     {
         IsDisposed = true;
         IsStarted = false;
+        if (DisposeException is not null)
+        {
+            throw DisposeException;
+        }
+
         return ValueTask.CompletedTask;
     }
 

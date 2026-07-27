@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using KeyboardAnalogThrottle.Core.Abstractions;
 using KeyboardAnalogThrottle.Core.Bindings;
 using KeyboardAnalogThrottle.Core.Configuration;
@@ -219,9 +220,36 @@ public sealed class EmulationEngine : IEmulationEngine
 
         await StopAsync(CancellationToken.None).ConfigureAwait(false);
         _disposed = true;
-        await _input.DisposeAsync().ConfigureAwait(false);
-        await _controller.DisposeAsync().ConfigureAwait(false);
-        _lifecycle.Dispose();
+
+        Exception? disposalFailure = null;
+        try
+        {
+            await _input.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            disposalFailure = exception;
+        }
+
+        try
+        {
+            await _controller.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            disposalFailure = disposalFailure is null
+                ? exception
+                : new AggregateException(disposalFailure, exception);
+        }
+        finally
+        {
+            _lifecycle.Dispose();
+        }
+
+        if (disposalFailure is not null)
+        {
+            ExceptionDispatchInfo.Capture(disposalFailure).Throw();
+        }
     }
 
     private async Task RunLoopAsync(CancellationToken cancellationToken)
