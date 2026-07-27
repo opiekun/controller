@@ -207,4 +207,18 @@ public sealed class ConfigurationValidatorTests
     {
         Assert.Empty(ConfigurationValidator.Validate(AppConfiguration.CreateDefault()));
     }
+
+    [Fact]
+    public void Rejects_undefined_channel_modes()
+    {
+        var defaults = AppConfiguration.CreateDefault();
+        var configuration = defaults with
+        {
+            Throttle = defaults.Throttle with { Mode = (InputMode)999 }
+        };
+
+        Assert.Contains(
+            ConfigurationValidator.Validate(configuration),
+            error => error.PropertyName == "Throttle.Mode" && error.Message == "Throttle mode is invalid.");
+    }
 }

@@ -56,10 +56,23 @@ public sealed class ApplicationLifetimeService : IAsyncDisposable
 
     public void RequestEmergencyStop()
     {
+        Task cleanup;
         lock (_cleanupGate)
         {
-            _cleanup ??= EmergencyStopAsync();
+            if (_cleanup is { IsCompleted: false })
+            {
+                return;
+            }
+
+            cleanup = EmergencyStopAsync();
+            _cleanup = cleanup;
         }
+
+        _ = cleanup.ContinueWith(
+            completedCleanup => ClearCompletedCleanup(completedCleanup),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     public async ValueTask DisposeAsync()
@@ -115,4 +128,15 @@ public sealed class ApplicationLifetimeService : IAsyncDisposable
     }
 
     private void OnEngineStateChanged(object? sender, KeyboardAnalogThrottle.Core.Emulation.EmulationState state) => _input?.SetEngineRunning(state.IsRunning);
+
+    private void ClearCompletedCleanup(Task completedCleanup)
+    {
+        lock (_cleanupGate)
+        {
+            if (ReferenceEquals(_cleanup, completedCleanup))
+            {
+                _cleanup = null;
+            }
+        }
+    }
 }

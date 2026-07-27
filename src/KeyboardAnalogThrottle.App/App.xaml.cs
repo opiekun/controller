@@ -9,9 +9,13 @@ namespace KeyboardAnalogThrottle.App;
 
 public partial class App : Application
 {
+    private static readonly TimeSpan ShutdownCleanupTimeout = TimeSpan.FromMilliseconds(500);
+
     private ServiceProvider? _services;
     private SingleInstanceGuard? _singleInstance;
     private ApplicationLifetimeService? _lifetime;
+    private readonly object _shutdownGate = new();
+    private Task? _shutdown;
     private int _resourcesDisposed;
 
     protected override async void OnStartup(StartupEventArgs eventArgs)
@@ -57,19 +61,7 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs eventArgs)
     {
         RequestEmergencyStop();
-        var cleanup = _lifetime?.DisposeAsync().AsTask();
-        if (cleanup is null)
-        {
-            DisposeResources();
-        }
-        else
-        {
-            _ = cleanup.ContinueWith(
-                _ => DisposeResources(),
-                CancellationToken.None,
-                TaskContinuationOptions.None,
-                TaskScheduler.Default);
-        }
+        BeginBoundedShutdown();
 
         base.OnExit(eventArgs);
     }
@@ -78,7 +70,11 @@ public partial class App : Application
 
     private void OnUnhandledException(object sender, UnhandledExceptionEventArgs eventArgs) => RequestEmergencyStop();
 
-    private void OnProcessExit(object? sender, EventArgs eventArgs) => RequestEmergencyStop();
+    private void OnProcessExit(object? sender, EventArgs eventArgs)
+    {
+        RequestEmergencyStop();
+        BeginBoundedShutdown();
+    }
 
     private void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs eventArgs)
     {
@@ -87,6 +83,43 @@ public partial class App : Application
     }
 
     private void RequestEmergencyStop() => _lifetime?.RequestEmergencyStop();
+
+    private void BeginBoundedShutdown()
+    {
+        Task? shutdown;
+        lock (_shutdownGate)
+        {
+            _shutdown ??= _lifetime?.DisposeAsync().AsTask();
+            shutdown = _shutdown;
+        }
+
+        if (shutdown is null)
+        {
+            DisposeResources();
+            return;
+        }
+
+        try
+        {
+            shutdown.Wait(ShutdownCleanupTimeout);
+        }
+        catch
+        {
+            // The process is already exiting; resource cleanup below must still run.
+        }
+
+        if (shutdown.IsCompleted)
+        {
+            DisposeResources();
+            return;
+        }
+
+        _ = shutdown.ContinueWith(
+            _ => DisposeResources(),
+            CancellationToken.None,
+            TaskContinuationOptions.None,
+            TaskScheduler.Default);
+    }
 
     private void DisposeResources()
     {

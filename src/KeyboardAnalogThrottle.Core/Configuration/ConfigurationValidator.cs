@@ -67,6 +67,11 @@ public static class ConfigurationValidator
     {
         ValidateBinding($"{channelName}.PrimaryBinding", channel.PrimaryBinding, errors);
 
+        if (!Enum.IsDefined(channel.Mode))
+        {
+            errors.Add(new($"{channelName}.Mode", $"{channelName} mode is invalid."));
+        }
+
         if (!double.IsFinite(channel.RiseSeconds) || channel.RiseSeconds <= 0)
         {
             errors.Add(new($"{channelName}.RiseSeconds", $"{channelName} rise duration must be greater than zero."));

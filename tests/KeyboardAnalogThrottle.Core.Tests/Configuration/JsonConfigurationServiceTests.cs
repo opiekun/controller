@@ -1,5 +1,10 @@
+using KeyboardAnalogThrottle.App.Services;
+using KeyboardAnalogThrottle.Core.Abstractions;
 using KeyboardAnalogThrottle.Core.Configuration;
+using KeyboardAnalogThrottle.Core.Emulation;
+using KeyboardAnalogThrottle.Infrastructure.Windows.Keyboard;
 using KeyboardAnalogThrottle.Infrastructure.Windows.Lifecycle;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace KeyboardAnalogThrottle.Core.Tests.Configuration;
 
@@ -103,6 +108,43 @@ public sealed class JsonConfigurationServiceTests : IAsyncLifetime
         Assert.Empty(ConfigurationValidator.Validate(service.Current));
     }
 
+    [Fact]
+    public async Task Undefined_numeric_mode_fails_reload_before_application_services_are_resolved()
+    {
+        await File.WriteAllTextAsync(ConfigPath, "{ \"throttle\": { \"mode\": 999 } }");
+        using var configuration = new JsonConfigurationService(ConfigPath);
+        var services = new RejectingServiceProvider();
+        await using var lifetime = new ApplicationLifetimeService(
+            configuration,
+            services,
+            NullLogger<ApplicationLifetimeService>.Instance);
+
+        var result = await lifetime.InitializeAsync(CancellationToken.None);
+
+        Assert.False(result.IsSuccess);
+        Assert.Contains(result.Errors, error => error.PropertyName == "Throttle.Mode" && error.Message == "Throttle mode is invalid.");
+        Assert.Equal(0, services.RequestCount);
+    }
+
+    [Fact]
+    public async Task Completed_emergency_stop_does_not_suppress_a_later_emergency_stop()
+    {
+        using var configuration = new JsonConfigurationService(ConfigPath);
+        var engine = new CountingEngine();
+        await using var input = new LowLevelKeyboardInputSource(AppConfiguration.CreateDefault());
+        var services = new FixedServiceProvider(engine, input);
+        await using var lifetime = new ApplicationLifetimeService(
+            configuration,
+            services,
+            NullLogger<ApplicationLifetimeService>.Instance);
+        Assert.True((await lifetime.InitializeAsync(CancellationToken.None)).IsSuccess);
+
+        lifetime.RequestEmergencyStop();
+        await WaitUntilAsync(() => engine.EmergencyResetCount == 1);
+        lifetime.RequestEmergencyStop();
+        await WaitUntilAsync(() => engine.EmergencyResetCount == 2);
+    }
+
     public Task InitializeAsync()
     {
         Directory.CreateDirectory(_directory);
@@ -127,5 +169,50 @@ public sealed class JsonConfigurationServiceTests : IAsyncLifetime
 
             await Task.Delay(25);
         }
+    }
+
+    private sealed class RejectingServiceProvider : IServiceProvider
+    {
+        public int RequestCount { get; private set; }
+
+        public object? GetService(Type serviceType)
+        {
+            RequestCount++;
+            throw new InvalidOperationException($"Application services must not resolve when configuration is invalid: {serviceType.Name}.");
+        }
+    }
+
+    private sealed class FixedServiceProvider(IEmulationEngine engine, LowLevelKeyboardInputSource input) : IServiceProvider
+    {
+        public object? GetService(Type serviceType) => serviceType == typeof(IEmulationEngine)
+            ? engine
+            : serviceType == typeof(LowLevelKeyboardInputSource)
+                ? input
+                : null;
+    }
+
+    private sealed class CountingEngine : IEmulationEngine
+    {
+        public int EmergencyResetCount { get; private set; }
+
+        public EmulationState State => EmulationState.Stopped;
+
+        public event EventHandler<EmulationState>? StateChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task EmergencyResetAsync(CancellationToken cancellationToken)
+        {
+            EmergencyResetCount++;
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
