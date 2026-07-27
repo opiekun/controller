@@ -24,6 +24,12 @@ public sealed class FakeVirtualController : IVirtualController
 
     public int SetLeftCount { get; private set; }
 
+    public int SetRightAttemptCount { get; private set; }
+
+    public int SetLeftAttemptCount { get; private set; }
+
+    public int SubmitAttemptCount { get; private set; }
+
     public Exception? ConnectException { get; set; }
 
     public Exception? DisconnectException { get; set; }
@@ -33,6 +39,8 @@ public sealed class FakeVirtualController : IVirtualController
     public Exception? SetLeftException { get; set; }
 
     public Exception? SubmitException { get; set; }
+
+    public Action<byte>? OnSetRightTrigger { get; set; }
 
     public Task ConnectAsync(CancellationToken cancellationToken)
     {
@@ -63,6 +71,7 @@ public sealed class FakeVirtualController : IVirtualController
 
     public void SetRightTrigger(byte value)
     {
+        SetRightAttemptCount++;
         ThrowIfUnavailable();
         SetRightCount++;
         if (SetRightException is not null)
@@ -71,10 +80,12 @@ public sealed class FakeVirtualController : IVirtualController
         }
 
         RightTrigger = value;
+        OnSetRightTrigger?.Invoke(value);
     }
 
     public void SetLeftTrigger(byte value)
     {
+        SetLeftAttemptCount++;
         ThrowIfUnavailable();
         SetLeftCount++;
         if (SetLeftException is not null)
@@ -87,6 +98,7 @@ public sealed class FakeVirtualController : IVirtualController
 
     public void SubmitReport()
     {
+        SubmitAttemptCount++;
         ThrowIfUnavailable();
         SubmitCount++;
         if (SubmitException is not null)

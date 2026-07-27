@@ -7,13 +7,26 @@ namespace KeyboardAnalogThrottle.Core.Tests.Fakes;
 public sealed class FakeKeyboardInputSource : IKeyboardInputSource
 {
     private InputSnapshot _snapshot;
+    private InputHealth _health = InputHealth.Healthy;
 
     public FakeKeyboardInputSource(InputSnapshot? snapshot = null)
     {
         _snapshot = snapshot ?? InputSnapshot.Empty;
     }
 
-    public InputHealth Health { get; set; } = InputHealth.Healthy;
+    public InputHealth Health
+    {
+        get
+        {
+            if (HealthException is not null)
+            {
+                throw HealthException;
+            }
+
+            return _health;
+        }
+        set => _health = value;
+    }
 
     public bool IsStarted { get; private set; }
 
@@ -28,6 +41,8 @@ public sealed class FakeKeyboardInputSource : IKeyboardInputSource
     public Exception? StopException { get; set; }
 
     public Exception? SnapshotException { get; set; }
+
+    public Exception? HealthException { get; set; }
 
     public Action? OnStart { get; set; }
 

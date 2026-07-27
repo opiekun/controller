@@ -170,6 +170,53 @@ public sealed class EmulationEngineTests
         Assert.Equal((byte)128, controller.RightTrigger);
     }
 
+    [Fact]
+    public async Task Stop_does_not_attempt_remaining_zero_report_calls_after_disconnect_between_calls()
+    {
+        var controller = new FakeVirtualController();
+        await using var engine = CreateEngine(controller, FakeKeyboardInputSource.Pressed());
+        await engine.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => controller.SubmitCount == 1);
+        var attemptsBeforeStop = (controller.SetLeftAttemptCount, controller.SubmitAttemptCount);
+        controller.OnSetRightTrigger = _ => controller.ForceDisconnect();
+
+        await engine.StopAsync(CancellationToken.None);
+
+        Assert.Equal(attemptsBeforeStop.SetLeftAttemptCount, controller.SetLeftAttemptCount);
+        Assert.Equal(attemptsBeforeStop.SubmitAttemptCount, controller.SubmitAttemptCount);
+    }
+
+    [Fact]
+    public async Task Snapshot_invalid_operation_is_classified_as_an_input_fault()
+    {
+        var input = FakeKeyboardInputSource.Pressed();
+        input.SnapshotException = new InvalidOperationException("hook read failed");
+        var controller = new FakeVirtualController();
+        await using var engine = CreateEngine(controller, input);
+
+        await engine.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => !engine.State.IsRunning);
+
+        Assert.Equal(EmulationFaultKind.InputUnavailable, engine.State.Fault?.Kind);
+    }
+
+    [Fact]
+    public async Task Health_object_disposal_is_classified_as_an_input_fault()
+    {
+        var clock = new FakeClock();
+        var input = FakeKeyboardInputSource.Pressed();
+        var controller = new FakeVirtualController();
+        await using var engine = CreateEngine(controller, input, clock);
+        await engine.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => clock.PendingDelayCount == 1);
+        input.HealthException = new ObjectDisposedException("keyboard hook");
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        await WaitUntilAsync(() => !engine.State.IsRunning);
+
+        Assert.Equal(EmulationFaultKind.InputUnavailable, engine.State.Fault?.Kind);
+    }
+
     private static IEmulationEngine CreateEngine(
         IVirtualController controller,
         IKeyboardInputSource input,

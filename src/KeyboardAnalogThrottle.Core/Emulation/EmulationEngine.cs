@@ -110,13 +110,13 @@ public sealed class EmulationEngine : IEmulationEngine
                 _unhealthySince = null;
                 _throttleCut.Reset();
                 _loopCancellation = new CancellationTokenSource();
-                Publish(new EmulationState(true, 0d, 0d, 0d, 0d, 0, 0, _input.Health, null), force: true);
+                Publish(new EmulationState(true, 0d, 0d, 0d, 0d, 0, 0, ReadInputHealth(), null), force: true);
                 _loopTask = Task.Run(() => RunLoopAsync(_loopCancellation.Token));
             }
             catch (Exception exception)
             {
                 await CleanupStartedResourcesAsync(inputStarted).ConfigureAwait(false);
-                Publish(StoppedWithFault(CreateFault(EmulationFaultKind.Startup, exception)), force: true);
+                Publish(StoppedWithFault(CreateFault(FaultKindFor(exception), exception)), force: true);
                 throw;
             }
         }
@@ -212,7 +212,7 @@ public sealed class EmulationEngine : IEmulationEngine
 
     private void ProcessFrame(TimeSpan timestamp, TimeSpan elapsed)
     {
-        var health = _input.Health;
+        var health = ReadInputHealth();
         if (health != InputHealth.Healthy)
         {
             _unhealthySince ??= timestamp;
@@ -226,7 +226,7 @@ public sealed class EmulationEngine : IEmulationEngine
         }
 
         _unhealthySince = null;
-        var snapshot = _input.GetSnapshot();
+        var snapshot = ReadInputSnapshot();
         if (_emergencyBinding.Matches(snapshot))
         {
             _loopCancellation?.Cancel();
@@ -270,13 +270,7 @@ public sealed class EmulationEngine : IEmulationEngine
 
             _stopping = true;
             _loopCancellation?.Cancel();
-            var kind = exception is InputHealthException inputHealthException
-                ? inputHealthException.Health == InputHealth.Synchronizing
-                    ? EmulationFaultKind.InputSynchronizationTimedOut
-                    : EmulationFaultKind.InputUnavailable
-                : exception is ObjectDisposedException or InvalidOperationException
-                    ? EmulationFaultKind.Controller
-                    : EmulationFaultKind.Unexpected;
+            var kind = FaultKindFor(exception);
             await CleanupStartedResourcesAsync(inputStarted: true).ConfigureAwait(false);
             Publish(StoppedWithFault(CreateFault(kind, exception)), force: true);
         }
@@ -338,7 +332,9 @@ public sealed class EmulationEngine : IEmulationEngine
 
         ThrowIfControllerUnavailable();
         _controller.SetRightTrigger(right);
+        ThrowIfControllerUnavailable();
         _controller.SetLeftTrigger(left);
+        ThrowIfControllerUnavailable();
         _controller.SubmitReport();
         _lastReport = (right, left);
     }
@@ -358,12 +354,22 @@ public sealed class EmulationEngine : IEmulationEngine
         {
         }
 
+        if (_controller.IsDisposed || !_controller.IsConnected)
+        {
+            return;
+        }
+
         try
         {
             _controller.SetLeftTrigger(0);
         }
         catch
         {
+        }
+
+        if (_controller.IsDisposed || !_controller.IsConnected)
+        {
+            return;
         }
 
         try
@@ -414,7 +420,43 @@ public sealed class EmulationEngine : IEmulationEngine
     }
 
     private EmulationState StoppedWithFault(EmulationFault? fault) => new(
-        false, 0d, 0d, 0d, 0d, 0, 0, _input.Health, fault);
+        false, 0d, 0d, 0d, 0d, 0, 0, ReadInputHealthForState(), fault);
+
+    private InputHealth ReadInputHealth()
+    {
+        try
+        {
+            return _input.Health;
+        }
+        catch (Exception exception)
+        {
+            throw new InputSourceException("Keyboard input health could not be read.", exception);
+        }
+    }
+
+    private InputHealth ReadInputHealthForState()
+    {
+        try
+        {
+            return _input.Health;
+        }
+        catch
+        {
+            return InputHealth.Unavailable;
+        }
+    }
+
+    private InputSnapshot ReadInputSnapshot()
+    {
+        try
+        {
+            return _input.GetSnapshot();
+        }
+        catch (Exception exception)
+        {
+            throw new InputSourceException("Keyboard input snapshot could not be read.", exception);
+        }
+    }
 
     private TimeSpan ClampElapsed(TimeSpan elapsed)
     {
@@ -469,6 +511,16 @@ public sealed class EmulationEngine : IEmulationEngine
     private static EmulationFault CreateFault(EmulationFaultKind kind, Exception exception) =>
         new(kind, exception.Message, exception);
 
+    private static EmulationFaultKind FaultKindFor(Exception exception) => exception switch
+    {
+        InputHealthException inputHealthException => inputHealthException.Health == InputHealth.Synchronizing
+            ? EmulationFaultKind.InputSynchronizationTimedOut
+            : EmulationFaultKind.InputUnavailable,
+        InputSourceException => EmulationFaultKind.InputUnavailable,
+        ObjectDisposedException or InvalidOperationException => EmulationFaultKind.Controller,
+        _ => EmulationFaultKind.Unexpected
+    };
+
     private void ThrowIfDisposed()
     {
         if (_disposed)
@@ -481,4 +533,6 @@ public sealed class EmulationEngine : IEmulationEngine
     {
         public InputHealth Health { get; } = health;
     }
+
+    private sealed class InputSourceException(string message, Exception innerException) : Exception(message, innerException);
 }
