@@ -4,6 +4,9 @@ namespace KeyboardAnalogThrottle.Core.Tests.Fakes;
 
 public sealed class FakeVirtualController : IVirtualController
 {
+    private readonly List<byte> _rightTriggerValues = [];
+    private readonly List<byte> _leftTriggerValues = [];
+
     public bool IsConnected { get; private set; }
 
     public bool IsDisposed { get; private set; }
@@ -29,6 +32,10 @@ public sealed class FakeVirtualController : IVirtualController
     public int SetLeftAttemptCount { get; private set; }
 
     public int SubmitAttemptCount { get; private set; }
+
+    public IReadOnlyList<byte> RightTriggerValues => _rightTriggerValues;
+
+    public IReadOnlyList<byte> LeftTriggerValues => _leftTriggerValues;
 
     public Exception? ConnectException { get; set; }
 
@@ -80,6 +87,7 @@ public sealed class FakeVirtualController : IVirtualController
         }
 
         RightTrigger = value;
+        _rightTriggerValues.Add(value);
         OnSetRightTrigger?.Invoke(value);
     }
 
@@ -94,6 +102,7 @@ public sealed class FakeVirtualController : IVirtualController
         }
 
         LeftTrigger = value;
+        _leftTriggerValues.Add(value);
     }
 
     public void SubmitReport()
