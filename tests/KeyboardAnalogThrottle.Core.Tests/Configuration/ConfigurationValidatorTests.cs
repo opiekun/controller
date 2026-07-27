@@ -169,6 +169,40 @@ public sealed class ConfigurationValidatorTests
     }
 
     [Fact]
+    public void Rejects_undefined_numeric_primary_keys_through_the_shared_binding_parser()
+    {
+        var defaults = AppConfiguration.CreateDefault();
+        var configuration = defaults with
+        {
+            Throttle = defaults.Throttle with { PrimaryBinding = "999" }
+        };
+
+        Assert.Contains(
+            ConfigurationValidator.Validate(configuration),
+            error => error.PropertyName == "Throttle.PrimaryBinding" && error.Message == "Binding '999' is invalid.");
+    }
+
+    [Fact]
+    public void Accepts_left_and_right_modifier_aliases_through_the_shared_binding_parser()
+    {
+        var defaults = AppConfiguration.CreateDefault();
+        var configuration = defaults with
+        {
+            Input = defaults.Input with { EmergencyDisableBinding = "RightControl+LeftAlt+F12" },
+            Throttle = defaults.Throttle with
+            {
+                FixedLevels = new Dictionary<string, double>
+                {
+                    ["LeftShift+W"] = .5,
+                    ["RightControl+W"] = 1
+                }
+            }
+        };
+
+        Assert.Empty(ConfigurationValidator.Validate(configuration));
+    }
+
+    [Fact]
     public void Default_configuration_is_valid()
     {
         Assert.Empty(ConfigurationValidator.Validate(AppConfiguration.CreateDefault()));

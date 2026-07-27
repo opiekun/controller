@@ -54,4 +54,17 @@ public sealed class FixedBindingResolverTests
 
         Assert.Equal(.25, FixedBindingResolver.Resolve(snapshot, levels)!.Value);
     }
+
+    [Fact]
+    public void Prefers_the_lexically_first_canonical_text_when_equal_modifier_counts_match()
+    {
+        var levels = new Dictionary<InputBinding, double>
+        {
+            [BindingParser.Parse("Alt+Ctrl+W")] = .25,
+            [BindingParser.Parse("Alt+Shift+W")] = .75
+        };
+        var snapshot = InputSnapshot.FromPressed(InputKey.W, InputKey.LeftControl, InputKey.LeftAlt, InputKey.LeftShift);
+
+        Assert.Equal(.25, FixedBindingResolver.Resolve(snapshot, levels)!.Value);
+    }
 }

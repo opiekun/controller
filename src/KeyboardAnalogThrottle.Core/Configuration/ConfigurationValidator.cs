@@ -1,3 +1,5 @@
+using KeyboardAnalogThrottle.Core.Bindings;
+
 namespace KeyboardAnalogThrottle.Core.Configuration;
 
 public sealed record ConfigurationValidationError(string PropertyName, string Message);
@@ -164,7 +166,6 @@ public static class ConfigurationValidator
         }
     }
 
-    // This normalizes configuration text until the richer InputBinding model is introduced in Task 2.
     private static bool TryParseStructuralBinding(string? binding, out string canonicalBinding)
     {
         canonicalBinding = string.Empty;
@@ -173,51 +174,14 @@ public static class ConfigurationValidator
             return false;
         }
 
-        var control = false;
-        var alt = false;
-        var shift = false;
-        string? primary = null;
-
-        foreach (var rawToken in binding.Split('+', StringSplitOptions.TrimEntries))
+        try
         {
-            if (rawToken.Length == 0)
-            {
-                return false;
-            }
-
-            var token = rawToken.ToUpperInvariant();
-            switch (token)
-            {
-                case "CTRL":
-                case "CONTROL":
-                    if (control) return false;
-                    control = true;
-                    break;
-                case "ALT":
-                    if (alt) return false;
-                    alt = true;
-                    break;
-                case "SHIFT":
-                    if (shift) return false;
-                    shift = true;
-                    break;
-                default:
-                    if (primary is not null || token.Any(char.IsWhiteSpace)) return false;
-                    primary = token;
-                    break;
-            }
+            canonicalBinding = BindingParser.Parse(binding).ToString();
+            return true;
         }
-
-        if (primary is null)
+        catch (ArgumentException)
         {
             return false;
         }
-
-        canonicalBinding = string.Concat(
-            control ? "Ctrl+" : string.Empty,
-            alt ? "Alt+" : string.Empty,
-            shift ? "Shift+" : string.Empty,
-            primary);
-        return true;
     }
 }

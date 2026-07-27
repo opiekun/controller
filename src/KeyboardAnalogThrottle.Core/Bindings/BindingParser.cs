@@ -72,7 +72,7 @@ public static class BindingParser
             return true;
         }
 
-        if (!Enum.TryParse<InputKey>(token, true, out key) || key is InputKey.None or
+        if (!Enum.TryParse<InputKey>(token, true, out key) || !Enum.IsDefined(key) || key is InputKey.None or
             InputKey.LeftControl or InputKey.RightControl or InputKey.LeftAlt or InputKey.RightAlt or InputKey.LeftShift or InputKey.RightShift)
         {
             key = InputKey.None;

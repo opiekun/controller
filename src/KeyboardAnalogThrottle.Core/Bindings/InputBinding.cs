@@ -18,31 +18,27 @@ public readonly record struct InputBinding(InputKey Primary, InputModifiers Modi
         return Primary != InputKey.None && snapshot.IsPressed(Primary) && (snapshot.Modifiers & Modifiers) == Modifiers;
     }
 
-    public override string ToString() => string.Concat(
-        (Modifiers & InputModifiers.Control) != 0 ? "Ctrl+" : string.Empty,
-        (Modifiers & InputModifiers.Alt) != 0 ? "Alt+" : string.Empty,
-        (Modifiers & InputModifiers.Shift) != 0 ? "Shift+" : string.Empty,
-        FormatPrimary(Primary));
+    public override string ToString() => string.Concat(ModifierPrefix(Modifiers), FormatPrimary(Primary));
 
     internal int CompareCanonicalTo(InputBinding other)
     {
-        var modifierComparison = CanonicalModifierRank(Modifiers).CompareTo(CanonicalModifierRank(other.Modifiers));
+        var modifierComparison = string.CompareOrdinal(ModifierPrefix(Modifiers), ModifierPrefix(other.Modifiers));
         return modifierComparison != 0
             ? modifierComparison
             : string.CompareOrdinal(FormatPrimary(Primary), FormatPrimary(other.Primary));
     }
 
-    private static int CanonicalModifierRank(InputModifiers modifiers) => modifiers switch
+    private static string ModifierPrefix(InputModifiers modifiers) => modifiers switch
     {
-        InputModifiers.None => 0,
-        InputModifiers.Alt => 0,
-        InputModifiers.Control => 1,
-        InputModifiers.Shift => 2,
-        InputModifiers.Alt | InputModifiers.Shift => 0,
-        InputModifiers.Control | InputModifiers.Alt => 1,
-        InputModifiers.Control | InputModifiers.Shift => 2,
-        InputModifiers.Control | InputModifiers.Alt | InputModifiers.Shift => 0,
-        _ => int.MaxValue
+        InputModifiers.None => "",
+        InputModifiers.Alt => "Alt+",
+        InputModifiers.Control => "Ctrl+",
+        InputModifiers.Shift => "Shift+",
+        InputModifiers.Control | InputModifiers.Alt => "Alt+Ctrl+",
+        InputModifiers.Alt | InputModifiers.Shift => "Alt+Shift+",
+        InputModifiers.Control | InputModifiers.Shift => "Ctrl+Shift+",
+        InputModifiers.Control | InputModifiers.Alt | InputModifiers.Shift => "Alt+Ctrl+Shift+",
+        _ => ""
     };
 
     private static string FormatPrimary(InputKey key) => key switch

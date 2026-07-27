@@ -20,6 +20,8 @@ public sealed class BindingParserTests
     [InlineData("Ctrl+Shift")]
     [InlineData("Ctrl++W")]
     [InlineData("Ctrl+BadKey")]
+    [InlineData("999")]
+    [InlineData("-1")]
     [InlineData("W+S")]
     [InlineData("")]
     [InlineData("   ")]
