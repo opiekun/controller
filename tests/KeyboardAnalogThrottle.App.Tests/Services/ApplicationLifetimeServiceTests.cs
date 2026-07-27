@@ -83,7 +83,11 @@ public sealed class ApplicationLifetimeServiceTests
     {
         public AppConfiguration Current { get; } = AppConfiguration.CreateDefault();
 
-        public event Func<AppConfiguration, CancellationToken, Task>? ConfigurationChanged;
+        public event Func<AppConfiguration, CancellationToken, Task>? ConfigurationChanged
+        {
+            add { }
+            remove { }
+        }
 
         public Task<ConfigurationReloadResult> ReloadAsync(CancellationToken cancellationToken) =>
             Task.FromResult(ConfigurationReloadResult.Success);
