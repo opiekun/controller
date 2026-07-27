@@ -6,6 +6,7 @@ using KeyboardAnalogThrottle.Infrastructure.Windows.Keyboard;
 
 namespace KeyboardAnalogThrottle.Core.Tests.Input;
 
+[Collection(KeyboardHookLifecycleCollection.Name)]
 public sealed class LowLevelKeyboardInputSourceTests
 {
     private const nint PassedThrough = 73;
@@ -36,14 +37,43 @@ public sealed class LowLevelKeyboardInputSourceTests
         var callbackResult = Task.Run(() => InvokeKeyDown(oldCallback));
         Assert.True(callbackReachedEntry.Wait(TimeSpan.FromSeconds(5)));
 
-        await source.StopAsync(CancellationToken.None);
+        var stop = source.StopAsync(CancellationToken.None);
+        Assert.False(stop.IsCompleted);
+        continueCallback.Set();
+        Assert.Equal(PassedThrough, await callbackResult);
+        await stop;
         await source.StartAsync(CancellationToken.None);
         source.SetEngineRunning(isRunning: true);
-        continueCallback.Set();
 
-        Assert.Equal(PassedThrough, await callbackResult);
         Assert.False(source.GetSnapshot().IsPressed(Core.Input.InputKey.W));
         Assert.Equal(2, platform.InstalledCallbacks.Count);
+    }
+
+    [Fact]
+    public async Task Start_stop_restart_installs_and_unhooks_on_one_dedicated_thread_in_order()
+    {
+        var callerThreadId = Environment.CurrentManagedThreadId;
+        var messageLoop = new FakeKeyboardHookMessageLoop();
+        var hookThread = new KeyboardHookThread(messageLoop);
+        var platform = new FakeKeyboardHookPlatform(PassedThrough);
+        var source = new LowLevelKeyboardInputSource(
+            Configuration(),
+            platform,
+            hookThread: hookThread);
+
+        await source.StartAsync(CancellationToken.None);
+        await source.StartAsync(CancellationToken.None);
+        await source.StopAsync(CancellationToken.None);
+        await source.StopAsync(CancellationToken.None);
+        await source.StartAsync(CancellationToken.None);
+        await source.DisposeAsync();
+
+        Assert.Equal(["install", "unhook", "install", "unhook"], platform.LifecycleOperations);
+        Assert.Equal(2, platform.InstalledCallbacks.Count);
+        Assert.NotSame(platform.InstalledCallbacks[0], platform.InstalledCallbacks[1]);
+        Assert.Equal(4, platform.LifecycleThreadIds.Count);
+        Assert.All(platform.LifecycleThreadIds, id => Assert.Equal(platform.LifecycleThreadIds[0], id));
+        Assert.NotEqual(callerThreadId, platform.LifecycleThreadIds[0]);
     }
 
     [Fact]
@@ -71,6 +101,7 @@ public sealed class LowLevelKeyboardInputSourceTests
 
         var stop = source.StopAsync(CancellationToken.None);
 
+        Assert.True(platform.Unhooked.Wait(TimeSpan.FromSeconds(5)));
         Assert.False(stop.IsCompleted);
         Assert.Equal(InputHealth.Healthy, source.Health);
         continueCallback.Set();
@@ -112,21 +143,43 @@ public sealed class LowLevelKeyboardInputSourceTests
     {
         public List<NativeMethods.HookProcedure> InstalledCallbacks { get; } = [];
 
+        public List<string> LifecycleOperations { get; } = [];
+
+        public List<int> LifecycleThreadIds { get; } = [];
+
+        public ManualResetEventSlim Unhooked { get; } = new();
+
         public IKeyboardHookRegistration Install(NativeMethods.HookProcedure callback)
         {
             InstalledCallbacks.Add(callback);
-            return new Registration();
+            LifecycleOperations.Add("install");
+            LifecycleThreadIds.Add(Environment.CurrentManagedThreadId);
+            return new Registration(this);
         }
 
         public nint CallNext(int code, nuint wParam, nint lParam) => passedThroughResult;
 
         public bool IsVirtualKeyDown(int virtualKey) => false;
 
-        private sealed class Registration : IKeyboardHookRegistration
+        private sealed class Registration(FakeKeyboardHookPlatform owner) : IKeyboardHookRegistration
         {
             public void Dispose()
             {
+                owner.LifecycleOperations.Add("unhook");
+                owner.LifecycleThreadIds.Add(Environment.CurrentManagedThreadId);
+                owner.Unhooked.Set();
             }
         }
+    }
+
+    private sealed class FakeKeyboardHookMessageLoop : IKeyboardHookMessageLoop
+    {
+        private readonly System.Collections.Concurrent.BlockingCollection<bool> _signals = [];
+
+        public uint InitializeCurrentThread() => (uint)Environment.CurrentManagedThreadId;
+
+        public bool WaitForCommand() => _signals.Take();
+
+        public void PostCommand(uint threadId) => _signals.Add(true);
     }
 }

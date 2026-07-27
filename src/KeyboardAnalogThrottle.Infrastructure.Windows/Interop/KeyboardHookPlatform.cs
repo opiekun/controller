@@ -38,5 +38,5 @@ internal sealed class Win32KeyboardHookPlatform : IKeyboardHookPlatform
         NativeMethods.CallNextHookEx(nint.Zero, code, wParam, lParam);
 
     public bool IsVirtualKeyDown(int virtualKey) =>
-        (NativeMethods.GetKeyState(virtualKey) & 0x8000) != 0;
+        (NativeMethods.GetAsyncKeyState(virtualKey) & 0x8000) != 0;
 }

@@ -29,29 +29,33 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
     private readonly KeyboardStateStore _stateStore = new();
     private readonly SuppressionPolicy _suppressionPolicy;
     private readonly IKeyboardHookPlatform _platform;
+    private readonly IKeyboardHookThread _hookThread;
     private readonly Action<KeyboardHookCallbackStage>? _callbackStage;
     private readonly CaptureSuppressedKeys _suppressedKeys = new();
-    private readonly List<KeyboardHookInstallation> _retiredInstallations = [];
-    private IKeyboardHookRegistration? _hook;
-    private KeyboardHookInstallation? _installation;
+    private KeyboardHookSession? _session;
     private int _engineIsRunning;
     private int _disposed;
 
     public LowLevelKeyboardInputSource(AppConfiguration configuration)
-        : this(configuration, new Win32KeyboardHookPlatform())
+        : this(
+            configuration,
+            new Win32KeyboardHookPlatform(),
+            hookThread: new KeyboardHookThread())
     {
     }
 
     internal LowLevelKeyboardInputSource(
         AppConfiguration configuration,
         IKeyboardHookPlatform platform,
-        Action<KeyboardHookCallbackStage>? callbackStage = null)
+        Action<KeyboardHookCallbackStage>? callbackStage = null,
+        IKeyboardHookThread? hookThread = null)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(platform);
         _suppressionPolicy = new SuppressionPolicy(configuration);
         _platform = platform;
         _callbackStage = callbackStage;
+        _hookThread = hookThread ?? new KeyboardHookThread();
     }
 
     public InputHealth Health => Volatile.Read(ref _disposed) != 0 ? InputHealth.Unavailable : _stateStore.Health;
@@ -69,7 +73,7 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
         try
         {
             ThrowIfDisposed();
-            if (_installation is not null)
+            if (_session is not null)
             {
                 return;
             }
@@ -77,23 +81,16 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
             var captureGeneration = _stateStore.BeginCapture();
             var capture = _suppressedKeys.BeginCapture(captureGeneration);
             var installation = new KeyboardHookInstallation(this, capture, _callbackStage);
-            IKeyboardHookRegistration? hook = null;
             try
             {
-                hook = _platform.Install(installation.Callback);
-                _hook = hook;
-                _installation = installation;
-                SynchronizeCurrentModifiers();
-                _stateStore.SetHealth(InputHealth.Healthy);
-                installation.Activate();
+                _session = await _hookThread
+                    .InvokeAsync(() => InstallSession(installation))
+                    .ConfigureAwait(false);
             }
             catch
             {
                 installation.CloseAdmission();
-                hook?.Dispose();
-                _hook = null;
-                _installation = null;
-                _retiredInstallations.Add(installation);
+                _session = null;
                 _suppressedKeys.EndCapture(capture);
                 _stateStore.StopCapture();
                 throw;
@@ -111,18 +108,15 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
         try
         {
             SetEngineRunning(isRunning: false);
-            var installation = _installation;
-            var hook = _hook;
-            _installation = null;
-            _hook = null;
-            installation?.CloseAdmission();
-            hook?.Dispose();
-
-            if (installation is not null)
+            var session = _session;
+            if (session is not null)
             {
-                _retiredInstallations.Add(installation);
-                await installation.WaitForQuiescenceAsync().ConfigureAwait(false);
-                _suppressedKeys.EndCapture(installation.Capture);
+                var quiescence = await _hookThread
+                    .InvokeAsync(session.CloseAdmissionAndUnhook)
+                    .ConfigureAwait(false);
+                _session = null;
+                await quiescence.ConfigureAwait(false);
+                _suppressedKeys.EndCapture(session.Installation.Capture);
             }
             else
             {
@@ -143,7 +137,33 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
     {
         if (Interlocked.Exchange(ref _disposed, 1) == 0)
         {
-            await StopAsync(CancellationToken.None).ConfigureAwait(false);
+            try
+            {
+                await StopAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                await _hookThread.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    private KeyboardHookSession InstallSession(KeyboardHookInstallation installation)
+    {
+        IKeyboardHookRegistration? registration = null;
+        try
+        {
+            registration = _platform.Install(installation.Callback);
+            SynchronizeCurrentModifiers();
+            _stateStore.SetHealth(InputHealth.Healthy);
+            installation.Activate();
+            return new KeyboardHookSession(installation, registration);
+        }
+        catch
+        {
+            installation.CloseAdmission();
+            registration?.Dispose();
+            throw;
         }
     }
 
@@ -317,12 +337,12 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
 
     private sealed class KeyboardHookInstallation
     {
+        private const int AdmissionClosed = int.MinValue;
         private readonly LowLevelKeyboardInputSource _source;
         private readonly Action<KeyboardHookCallbackStage>? _callbackStage;
         private readonly TaskCompletionSource _quiesced =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private int _accepting;
-        private int _inFlight;
+        private int _callbackState = AdmissionClosed;
 
         public KeyboardHookInstallation(
             LowLevelKeyboardInputSource source,
@@ -339,14 +359,20 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
 
         public NativeMethods.HookProcedure Callback { get; }
 
-        public bool IsAccepting => Volatile.Read(ref _accepting) != 0;
+        public bool IsAccepting => Volatile.Read(ref _callbackState) >= 0;
 
-        public void Activate() => Volatile.Write(ref _accepting, 1);
+        public void Activate()
+        {
+            if (Interlocked.CompareExchange(ref _callbackState, 0, AdmissionClosed) != AdmissionClosed)
+            {
+                throw new InvalidOperationException("The keyboard hook installation was already activated.");
+            }
+        }
 
         public void CloseAdmission()
         {
-            Volatile.Write(ref _accepting, 0);
-            if (Volatile.Read(ref _inFlight) == 0)
+            var priorState = Interlocked.Or(ref _callbackState, AdmissionClosed);
+            if ((priorState & int.MaxValue) == 0)
             {
                 _quiesced.TrySetResult();
             }
@@ -356,16 +382,21 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
 
         private nint Invoke(int code, nuint wParam, nint lParam)
         {
+            if (!TryEnter())
+            {
+                return _source._platform.CallNext(code, wParam, lParam);
+            }
+
             try
             {
                 _callbackStage?.Invoke(KeyboardHookCallbackStage.BeforeAdmission);
             }
             catch
             {
+                Exit();
                 return _source._platform.CallNext(code, wParam, lParam);
             }
 
-            Interlocked.Increment(ref _inFlight);
             if (!IsAccepting)
             {
                 Exit();
@@ -382,12 +413,43 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
             }
         }
 
+        private bool TryEnter()
+        {
+            while (true)
+            {
+                var state = Volatile.Read(ref _callbackState);
+                if (state < 0)
+                {
+                    return false;
+                }
+
+                if (Interlocked.CompareExchange(ref _callbackState, state + 1, state) == state)
+                {
+                    return true;
+                }
+            }
+        }
+
         private void Exit()
         {
-            if (Interlocked.Decrement(ref _inFlight) == 0 && !IsAccepting)
+            if (Interlocked.Decrement(ref _callbackState) == AdmissionClosed)
             {
                 _quiesced.TrySetResult();
             }
+        }
+    }
+
+    private sealed class KeyboardHookSession(
+        KeyboardHookInstallation installation,
+        IKeyboardHookRegistration registration)
+    {
+        public KeyboardHookInstallation Installation { get; } = installation;
+
+        public Task CloseAdmissionAndUnhook()
+        {
+            Installation.CloseAdmission();
+            registration.Dispose();
+            return Installation.WaitForQuiescenceAsync();
         }
     }
 }
