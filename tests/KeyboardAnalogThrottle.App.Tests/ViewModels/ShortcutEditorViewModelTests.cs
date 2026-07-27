@@ -204,6 +204,58 @@ public sealed class ShortcutEditorViewModelTests
         Assert.Empty(service.SavedConfigurations);
     }
 
+    [Fact]
+    public async Task Save_rebases_deliberate_edit_on_reloaded_configuration()
+    {
+        var initial = CreateConfiguration(
+            brakeFixedLevels: new Dictionary<string, double>
+            {
+                ["Ctrl+B"] = .25d,
+                ["Alt+B"] = .5d,
+                ["Shift+B"] = .75d,
+                ["Ctrl+Shift+B"] = 1d
+            });
+        var service = new RecordingConfigurationService(initial);
+        var editor = new ShortcutEditorViewModel(service)
+        {
+            ThrottlePrimaryBinding = "Y"
+        };
+        var reloaded = initial with
+        {
+            Controller = initial.Controller with { UpdateRateHz = 60 },
+            Brake = initial.Brake with
+            {
+                PrimaryBinding = "N",
+                FixedLevels = new Dictionary<string, double>
+                {
+                    ["Ctrl+N"] = .25d,
+                    ["Alt+N"] = .5d,
+                    ["Shift+N"] = .75d,
+                    ["Ctrl+Shift+N"] = 1d
+                }
+            }
+        };
+
+        await service.PublishReloadAsync(reloaded);
+
+        Assert.Equal("Y", editor.ThrottlePrimaryBinding);
+        Assert.Equal("N", editor.BrakePrimaryBinding);
+        Assert.Equal("Ctrl+N", Assert.Single(editor.BrakeFixedLevels, entry => entry.Level == .25d).Binding);
+        await editor.SaveAsync(CancellationToken.None);
+
+        var saved = Assert.Single(service.SavedConfigurations);
+        Assert.Equal("Y", saved.Throttle.PrimaryBinding);
+        Assert.Equal(60, saved.Controller.UpdateRateHz);
+        Assert.Equal("N", saved.Brake.PrimaryBinding);
+        Assert.Equal(new Dictionary<string, double>
+        {
+            ["Ctrl+N"] = .25d,
+            ["Alt+N"] = .5d,
+            ["Shift+N"] = .75d,
+            ["Ctrl+Shift+N"] = 1d
+        }, saved.Brake.FixedLevels);
+    }
+
     private static AppConfiguration CreateConfiguration(
         IReadOnlyDictionary<string, double>? throttleFixedLevels = null,
         IReadOnlyDictionary<string, double>? brakeFixedLevels = null)
@@ -237,15 +289,11 @@ public sealed class ShortcutEditorViewModelTests
 
     private sealed class RecordingConfigurationService(AppConfiguration current) : IConfigurationService
     {
-        public AppConfiguration Current { get; } = current;
+        public AppConfiguration Current { get; private set; } = current;
 
         public List<AppConfiguration> SavedConfigurations { get; } = [];
 
-        public event Func<AppConfiguration, CancellationToken, Task>? ConfigurationChanged
-        {
-            add { }
-            remove { }
-        }
+        public event Func<AppConfiguration, CancellationToken, Task>? ConfigurationChanged;
 
         public Task<ConfigurationReloadResult> ReloadAsync(CancellationToken cancellationToken) =>
             Task.FromResult(ConfigurationReloadResult.Success);
@@ -254,6 +302,20 @@ public sealed class ShortcutEditorViewModelTests
         {
             SavedConfigurations.Add(configuration);
             return Task.CompletedTask;
+        }
+
+        public async Task PublishReloadAsync(AppConfiguration configuration)
+        {
+            var handlers = ConfigurationChanged;
+            if (handlers is not null)
+            {
+                foreach (Func<AppConfiguration, CancellationToken, Task> handler in handlers.GetInvocationList())
+                {
+                    await handler(configuration, CancellationToken.None);
+                }
+            }
+
+            Current = configuration;
         }
     }
 }

@@ -118,6 +118,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _disposed = true;
         _session.StateChanged -= OnEngineStateChanged;
         _session.ControllerTestProgressChanged -= OnControllerTestProgressChanged;
+        ShortcutEditor.Dispose();
     }
 
     private bool CanOperate() => !_disposed && !IsOperationInProgress && !_isEmergencyResetInProgress;
