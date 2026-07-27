@@ -31,6 +31,7 @@ public static class ServiceCollectionExtensions
         services.AddLogging(builder => builder.AddSerilog(logger, dispose: true));
         services.AddSingleton(configurationService);
         services.AddSingleton<IConfigurationService>(configurationService);
+        services.AddSingleton(new RestartRequiredLoggingConfigurationGuard(configurationService));
         services.AddSingleton<VigemControllerFactory>();
         services.AddSingleton<IClock, StopwatchClock>();
         services.AddSingleton<IControllerTestService, ControllerTestService>();
@@ -38,9 +39,8 @@ public static class ServiceCollectionExtensions
         {
             LowLevelKeyboardInputSource? input = null;
             return new EmulationSession(
-                () =>
+                configuration =>
                 {
-                    var configuration = provider.GetRequiredService<IConfigurationService>().Current;
                     input = new LowLevelKeyboardInputSource(
                         configuration,
                         provider.GetRequiredService<ILogger<LowLevelKeyboardInputSource>>());

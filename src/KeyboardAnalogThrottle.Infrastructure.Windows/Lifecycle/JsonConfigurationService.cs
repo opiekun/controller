@@ -2,6 +2,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using KeyboardAnalogThrottle.Core.Abstractions;
 using KeyboardAnalogThrottle.Core.Configuration;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace KeyboardAnalogThrottle.Infrastructure.Windows.Lifecycle;
 
@@ -23,19 +25,21 @@ public sealed class JsonConfigurationService : IConfigurationService, IDisposabl
     private readonly object _currentGate = new();
     private readonly object _watcherGate = new();
     private readonly FileSystemWatcher _watcher;
+    private readonly ILogger<JsonConfigurationService> _logger;
     private AppConfiguration _current = AppConfiguration.CreateDefault();
     private CancellationTokenSource? _reloadDebounce;
     private int _disposed;
 
     public JsonConfigurationService()
-        : this(GetDefaultConfigurationPath())
+        : this(GetDefaultConfigurationPath(), logger: null)
     {
     }
 
-    public JsonConfigurationService(string configurationPath)
+    public JsonConfigurationService(string configurationPath, ILogger<JsonConfigurationService>? logger = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(configurationPath);
         _configurationPath = Path.GetFullPath(configurationPath);
+        _logger = logger ?? NullLogger<JsonConfigurationService>.Instance;
         var directory = Path.GetDirectoryName(_configurationPath)
             ?? throw new ArgumentException("The configuration path must include a directory.", nameof(configurationPath));
         Directory.CreateDirectory(directory);
@@ -107,9 +111,22 @@ public sealed class JsonConfigurationService : IConfigurationService, IDisposabl
                 return ConfigurationReloadResult.Failure(errors);
             }
 
-            await PublishConfigurationAsync(candidate, cancellationToken).ConfigureAwait(false);
-
-            return ConfigurationReloadResult.Success;
+            try
+            {
+                await PublishConfigurationAsync(candidate, cancellationToken).ConfigureAwait(false);
+                return ConfigurationReloadResult.Success;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Configuration reload could not be applied.");
+                return ConfigurationReloadResult.Failure([
+                    new ConfigurationValidationError("$", $"Configuration could not be applied: {exception.Message}")
+                ]);
+            }
         }
         catch (IOException exception)
         {
@@ -239,34 +256,18 @@ public sealed class JsonConfigurationService : IConfigurationService, IDisposabl
 
     private async Task PublishConfigurationAsync(AppConfiguration configuration, CancellationToken cancellationToken)
     {
-        AppConfiguration previous;
-        lock (_currentGate)
-        {
-            previous = _current;
-            _current = configuration;
-        }
-
         var handlers = ConfigurationChanged;
-        if (handlers is null)
-        {
-            return;
-        }
-
-        try
+        if (handlers is not null)
         {
             foreach (Func<AppConfiguration, CancellationToken, Task> handler in handlers.GetInvocationList())
             {
                 await handler(configuration, cancellationToken).ConfigureAwait(false);
             }
         }
-        catch
-        {
-            lock (_currentGate)
-            {
-                _current = previous;
-            }
 
-            throw;
+        lock (_currentGate)
+        {
+            _current = configuration;
         }
     }
 
@@ -306,7 +307,17 @@ public sealed class JsonConfigurationService : IConfigurationService, IDisposabl
             await Task.Delay(TimeSpan.FromMilliseconds(250), debounce.Token).ConfigureAwait(false);
             if (Volatile.Read(ref _disposed) == 0)
             {
-                await ReloadAsync(CancellationToken.None).ConfigureAwait(false);
+                var result = await ReloadAsync(CancellationToken.None).ConfigureAwait(false);
+                if (!result.IsSuccess)
+                {
+                    foreach (var error in result.Errors)
+                    {
+                        _logger.LogError(
+                            "Configuration watcher reload failed for {PropertyName}: {Message}",
+                            error.PropertyName,
+                            error.Message);
+                    }
+                }
             }
         }
         catch (OperationCanceledException) when (debounce.IsCancellationRequested)
@@ -316,6 +327,10 @@ public sealed class JsonConfigurationService : IConfigurationService, IDisposabl
         catch (ObjectDisposedException)
         {
             // Disposal may race a file-system notification.
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Configuration watcher reload crashed.");
         }
         finally
         {

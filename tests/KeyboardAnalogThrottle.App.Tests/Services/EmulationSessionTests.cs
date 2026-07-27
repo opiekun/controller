@@ -1,5 +1,6 @@
 using KeyboardAnalogThrottle.App.Services;
 using KeyboardAnalogThrottle.Core.Abstractions;
+using KeyboardAnalogThrottle.Core.Configuration;
 using KeyboardAnalogThrottle.Core.Emulation;
 using KeyboardAnalogThrottle.Infrastructure.Windows.Controller;
 
@@ -131,6 +132,85 @@ public sealed class EmulationSessionTests
         Assert.True(session.State.IsRunning);
     }
 
+    [Fact]
+    public async Task Failed_reconfigure_restores_the_previous_running_engine()
+    {
+        var initial = AppConfiguration.CreateDefault();
+        var configuration = new TestConfigurationService(initial);
+        var first = new RecordingEngine();
+        var failedCandidate = new RecordingEngine { StartException = new InvalidOperationException("candidate start failed") };
+        var engines = new Queue<IEmulationEngine>([first, failedCandidate]);
+        await using var session = new EmulationSession(
+            _ => engines.Dequeue(),
+            new BlockingControllerTestService(),
+            configuration: configuration);
+
+        await session.StartAsync(CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => configuration.PublishAsync(
+            initial with { Controller = initial.Controller with { UpdateRateHz = 144 } }));
+
+        Assert.Equal(2, first.StartCalls);
+        Assert.Equal(1, first.StopCalls);
+        Assert.Equal(0, first.DisposeCalls);
+        Assert.Equal(1, failedCandidate.StartCalls);
+        Assert.Equal(1, failedCandidate.DisposeCalls);
+        Assert.True(session.State.IsRunning);
+    }
+
+    [Fact]
+    public async Task Failed_candidate_cleanup_does_not_prevent_previous_engine_rollback()
+    {
+        var initial = AppConfiguration.CreateDefault();
+        var configuration = new TestConfigurationService(initial);
+        var first = new RecordingEngine();
+        var failedCandidate = new RecordingEngine
+        {
+            StartException = new InvalidOperationException("candidate start failed"),
+            DisposeException = new InvalidOperationException("candidate dispose failed")
+        };
+        var engines = new Queue<IEmulationEngine>([first, failedCandidate]);
+        await using var session = new EmulationSession(
+            _ => engines.Dequeue(),
+            new BlockingControllerTestService(),
+            configuration: configuration);
+
+        await session.StartAsync(CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => configuration.PublishAsync(
+            initial with { Controller = initial.Controller with { UpdateRateHz = 144 } }));
+
+        Assert.Equal(2, first.StartCalls);
+        Assert.True(session.State.IsRunning);
+    }
+
+    [Fact]
+    public async Task Failed_previous_disposal_rolls_back_the_newly_started_candidate()
+    {
+        var initial = AppConfiguration.CreateDefault();
+        var configuration = new TestConfigurationService(initial);
+        var first = new RecordingEngine
+        {
+            DisposeException = new InvalidOperationException("previous dispose failed"),
+            ThrowDisposeOnce = true
+        };
+        var candidate = new RecordingEngine();
+        var engines = new Queue<IEmulationEngine>([first, candidate]);
+        await using var session = new EmulationSession(
+            _ => engines.Dequeue(),
+            new BlockingControllerTestService(),
+            configuration: configuration);
+
+        await session.StartAsync(CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => configuration.PublishAsync(
+            initial with { Controller = initial.Controller with { UpdateRateHz = 144 } }));
+
+        Assert.Equal(2, first.StartCalls);
+        Assert.Equal(1, candidate.DisposeCalls);
+        Assert.True(session.State.IsRunning);
+    }
+
     private static async Task IgnoreFailureAsync(Task task)
     {
         try
@@ -157,6 +237,12 @@ public sealed class EmulationSessionTests
 
         public bool BlockStart { get; init; }
 
+        public Exception? StartException { get; init; }
+
+        public Exception? DisposeException { get; init; }
+
+        public bool ThrowDisposeOnce { get; init; }
+
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public event EventHandler<EmulationState>? StateChanged;
@@ -165,6 +251,10 @@ public sealed class EmulationSessionTests
         {
             StartCalls++;
             Started.TrySetResult();
+            if (StartException is not null)
+            {
+                throw StartException;
+            }
             if (BlockStart)
             {
                 await _startGate.Task.WaitAsync(cancellationToken);
@@ -187,6 +277,11 @@ public sealed class EmulationSessionTests
         public ValueTask DisposeAsync()
         {
             DisposeCalls++;
+            if (DisposeException is not null && (!ThrowDisposeOnce || DisposeCalls == 1))
+            {
+                throw DisposeException;
+            }
+
             return ValueTask.CompletedTask;
         }
 
@@ -221,5 +316,31 @@ public sealed class EmulationSessionTests
         }
 
         public void AllowFinish() => _finish.TrySetResult();
+    }
+
+    private sealed class TestConfigurationService(AppConfiguration current) : IConfigurationService
+    {
+        public AppConfiguration Current { get; private set; } = current;
+
+        public event Func<AppConfiguration, CancellationToken, Task>? ConfigurationChanged;
+
+        public async Task PublishAsync(AppConfiguration candidate)
+        {
+            var handlers = ConfigurationChanged;
+            if (handlers is not null)
+            {
+                foreach (Func<AppConfiguration, CancellationToken, Task> handler in handlers.GetInvocationList())
+                {
+                    await handler(candidate, CancellationToken.None);
+                }
+            }
+
+            Current = candidate;
+        }
+
+        public Task<ConfigurationReloadResult> ReloadAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(ConfigurationReloadResult.Success);
+
+        public Task SaveAsync(AppConfiguration configuration, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 }

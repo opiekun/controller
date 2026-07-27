@@ -3,6 +3,7 @@ using KeyboardAnalogThrottle.Core.Abstractions;
 using KeyboardAnalogThrottle.Core.Configuration;
 using KeyboardAnalogThrottle.Core.Emulation;
 using KeyboardAnalogThrottle.Infrastructure.Windows.Lifecycle;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace KeyboardAnalogThrottle.Core.Tests.Configuration;
@@ -66,6 +67,30 @@ public sealed class JsonConfigurationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Runtime_application_failure_keeps_the_previous_configuration_unpublished()
+    {
+        using var service = new JsonConfigurationService(ConfigPath);
+        Assert.True((await service.ReloadAsync(CancellationToken.None)).IsSuccess);
+        var original = service.Current;
+        AppConfiguration? currentSeenBySubscriber = null;
+        service.ConfigurationChanged += (_, _) =>
+        {
+            currentSeenBySubscriber = service.Current;
+            throw new InvalidOperationException("Candidate engine could not start.");
+        };
+        await File.WriteAllTextAsync(ConfigPath, "{ \"controller\": { \"updateRateHz\": 144 } }");
+
+        var result = await service.ReloadAsync(CancellationToken.None);
+
+        Assert.False(result.IsSuccess);
+        Assert.Contains(result.Errors, error =>
+            error.PropertyName == "$" &&
+            error.Message == "Configuration could not be applied: Candidate engine could not start.");
+        Assert.Same(original, currentSeenBySubscriber);
+        Assert.Same(original, service.Current);
+    }
+
+    [Fact]
     public async Task Invalid_reload_preserves_the_previous_valid_configuration()
     {
         using var service = new JsonConfigurationService(ConfigPath);
@@ -124,6 +149,23 @@ public sealed class JsonConfigurationServiceTests : IAsyncLifetime
         await WaitUntilAsync(() => File.Exists(ConfigPath));
 
         Assert.Empty(ConfigurationValidator.Validate(service.Current));
+    }
+
+    [Fact]
+    public async Task Watcher_reports_invalid_reload_errors_without_replacing_current_configuration()
+    {
+        var logger = new RecordingLogger<JsonConfigurationService>();
+        using var service = new JsonConfigurationService(ConfigPath, logger);
+        Assert.True((await service.ReloadAsync(CancellationToken.None)).IsSuccess);
+        var original = service.Current;
+
+        await File.WriteAllTextAsync(ConfigPath, "{ \"controller\": { \"updateRateHz\": 999 } }");
+
+        await WaitUntilAsync(() => logger.Errors.Count != 0);
+
+        Assert.Contains(logger.Errors, message =>
+            message.Contains("Configuration watcher reload failed for Controller.UpdateRateHz", StringComparison.Ordinal));
+        Assert.Same(original, service.Current);
     }
 
     [Fact]
@@ -237,5 +279,27 @@ public sealed class JsonConfigurationServiceTests : IAsyncLifetime
         public Task RunControllerTestAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<string> Errors { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel >= LogLevel.Error)
+            {
+                Errors.Add(formatter(state, exception));
+            }
+        }
     }
 }

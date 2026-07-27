@@ -26,6 +26,22 @@ public sealed class ApplicationLifetimeServiceTests
     }
 
     [Fact]
+    public async Task Logging_configuration_reload_is_rejected_until_restart()
+    {
+        var configuration = new MutableConfigurationService(AppConfiguration.CreateDefault());
+        using var guard = new RestartRequiredLoggingConfigurationGuard(configuration);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => configuration.PublishAsync(
+            configuration.Current with
+            {
+                Logging = configuration.Current.Logging with { MinimumLevel = "Warning" }
+            }));
+
+        Assert.Equal("Logging configuration changes require application restart.", exception.Message);
+        Assert.Equal("Information", configuration.Current.Logging.MinimumLevel);
+    }
+
+    [Fact]
     public async Task Initialize_does_not_resolve_the_emulation_engine()
     {
         await using var lifetime = new ApplicationLifetimeService(
@@ -87,6 +103,32 @@ public sealed class ApplicationLifetimeServiceTests
         {
             add { }
             remove { }
+        }
+
+        public Task<ConfigurationReloadResult> ReloadAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(ConfigurationReloadResult.Success);
+
+        public Task SaveAsync(AppConfiguration configuration, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class MutableConfigurationService(AppConfiguration current) : IConfigurationService
+    {
+        public AppConfiguration Current { get; private set; } = current;
+
+        public event Func<AppConfiguration, CancellationToken, Task>? ConfigurationChanged;
+
+        public async Task PublishAsync(AppConfiguration candidate)
+        {
+            var handlers = ConfigurationChanged;
+            if (handlers is not null)
+            {
+                foreach (Func<AppConfiguration, CancellationToken, Task> handler in handlers.GetInvocationList())
+                {
+                    await handler(candidate, CancellationToken.None);
+                }
+            }
+
+            Current = candidate;
         }
 
         public Task<ConfigurationReloadResult> ReloadAsync(CancellationToken cancellationToken) =>

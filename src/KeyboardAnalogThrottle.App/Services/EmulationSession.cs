@@ -29,7 +29,7 @@ public interface IEmulationSession : IAsyncDisposable
 
 public sealed class EmulationSession : IEmulationSession
 {
-    private readonly Func<IEmulationEngine> _createEngine;
+    private readonly Func<AppConfiguration, IEmulationEngine> _createEngine;
     private readonly IControllerTestService _controllerTest;
     private readonly IConfigurationService? _configuration;
     private readonly Action<bool>? _setInputRunning;
@@ -42,6 +42,15 @@ public sealed class EmulationSession : IEmulationSession
 
     public EmulationSession(
         Func<IEmulationEngine> createEngine,
+        IControllerTestService controllerTest,
+        Action<bool>? setInputRunning = null,
+        IConfigurationService? configuration = null)
+        : this(_ => (createEngine ?? throw new ArgumentNullException(nameof(createEngine)))(), controllerTest, setInputRunning, configuration)
+    {
+    }
+
+    public EmulationSession(
+        Func<AppConfiguration, IEmulationEngine> createEngine,
         IControllerTestService controllerTest,
         Action<bool>? setInputRunning = null,
         IConfigurationService? configuration = null)
@@ -70,7 +79,24 @@ public sealed class EmulationSession : IEmulationSession
         try
         {
             ThrowIfDisposed();
-            await GetOrCreateEngine().StartAsync(cancellationToken).ConfigureAwait(false);
+            if (_engine is not null)
+            {
+                await _engine.StartAsync(cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            var engine = CreateEngine(_configuration?.Current ?? AppConfiguration.CreateDefault());
+            _engine = engine;
+            try
+            {
+                await engine.StartAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                _engine = null;
+                await DisposeFailedEngineAsync(engine).ConfigureAwait(false);
+                throw;
+            }
         }
         catch (VigemDriverException exception)
         {
@@ -123,6 +149,12 @@ public sealed class EmulationSession : IEmulationSession
 
     public async Task ReconfigureAsync(CancellationToken cancellationToken)
     {
+        var configuration = _configuration?.Current ?? AppConfiguration.CreateDefault();
+        await ReconfigureAsync(configuration, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task ReconfigureAsync(AppConfiguration configuration, CancellationToken cancellationToken)
+    {
         ThrowIfDisposed();
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -134,21 +166,87 @@ public sealed class EmulationSession : IEmulationSession
                 return;
             }
 
+            IEmulationEngine candidate;
+            try
+            {
+                candidate = CreateEngine(configuration);
+            }
+            catch
+            {
+                throw;
+            }
+
             var restart = previous.State.IsRunning;
-            if (restart)
+            if (!restart)
+            {
+                try
+                {
+                    await previous.DisposeAsync().ConfigureAwait(false);
+                }
+                catch
+                {
+                    await DisposeFailedEngineAsync(candidate).ConfigureAwait(false);
+                    throw;
+                }
+
+                previous.StateChanged -= OnEngineStateChanged;
+                _engine = candidate;
+                PublishState(candidate.State);
+                return;
+            }
+
+            try
             {
                 await previous.StopAsync(cancellationToken).ConfigureAwait(false);
+                await candidate.StartAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                await DisposeFailedEngineAsync(candidate).ConfigureAwait(false);
+                try
+                {
+                    await previous.StartAsync(CancellationToken.None).ConfigureAwait(false);
+                    PublishState(previous.State);
+                }
+                catch
+                {
+                    previous.StateChanged -= OnEngineStateChanged;
+                    _engine = null;
+                    await DisposeEngineAsync(previous).ConfigureAwait(false);
+                    PublishState(EmulationState.Stopped);
+                }
+
+                throw;
             }
 
             previous.StateChanged -= OnEngineStateChanged;
-            _engine = null;
-            await previous.DisposeAsync().ConfigureAwait(false);
-            PublishState(EmulationState.Stopped);
-
-            if (restart)
+            _engine = candidate;
+            try
             {
-                await GetOrCreateEngine().StartAsync(cancellationToken).ConfigureAwait(false);
+                await DisposeEngineAsync(previous).ConfigureAwait(false);
             }
+            catch
+            {
+                await DisposeFailedEngineAsync(candidate).ConfigureAwait(false);
+                previous.StateChanged += OnEngineStateChanged;
+                _engine = previous;
+                try
+                {
+                    await previous.StartAsync(CancellationToken.None).ConfigureAwait(false);
+                    PublishState(previous.State);
+                }
+                catch
+                {
+                    previous.StateChanged -= OnEngineStateChanged;
+                    _engine = null;
+                    await DisposeFailedEngineAsync(previous).ConfigureAwait(false);
+                    PublishState(EmulationState.Stopped);
+                }
+
+                throw;
+            }
+
+            PublishState(candidate.State);
         }
         finally
         {
@@ -258,18 +356,29 @@ public sealed class EmulationSession : IEmulationSession
         }
     }
 
-    private IEmulationEngine GetOrCreateEngine()
+    private IEmulationEngine CreateEngine(AppConfiguration configuration)
     {
-        if (_engine is not null)
-        {
-            return _engine;
-        }
-
-        var engine = _createEngine();
+        var engine = _createEngine(configuration);
         engine.StateChanged += OnEngineStateChanged;
-        _engine = engine;
-        PublishState(engine.State);
         return engine;
+    }
+
+    private async Task DisposeEngineAsync(IEmulationEngine engine)
+    {
+        engine.StateChanged -= OnEngineStateChanged;
+        await engine.DisposeAsync().ConfigureAwait(false);
+    }
+
+    private async Task DisposeFailedEngineAsync(IEmulationEngine engine)
+    {
+        try
+        {
+            await DisposeEngineAsync(engine).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Candidate cleanup must not prevent restoration of a previously working engine.
+        }
     }
 
     private void CancelControllerTest()
@@ -281,7 +390,7 @@ public sealed class EmulationSession : IEmulationSession
     }
 
     private Task OnConfigurationChangedAsync(AppConfiguration configuration, CancellationToken cancellationToken) =>
-        ReconfigureAsync(cancellationToken);
+        ReconfigureAsync(configuration, cancellationToken);
 
     private void OnEngineStateChanged(object? sender, EmulationState state) => PublishState(state);
 
