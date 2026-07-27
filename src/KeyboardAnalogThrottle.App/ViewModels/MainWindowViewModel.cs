@@ -58,6 +58,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _logger = logger;
         _synchronizationContext = synchronizationContext ?? SynchronizationContext.Current;
 
+        ShortcutEditor = new ShortcutEditorViewModel(_configuration);
         StartCommand = CreateCommand(StartAsync, CanStart);
         StopCommand = CreateCommand(StopAsync, CanStop);
         EmergencyStopCommand = CreateCommand(EmergencyStopAsync, CanEmergencyReset);
@@ -66,6 +67,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         OpenConfigurationFolderCommand = CreateCommand(OpenConfigurationFolderAsync, CanOperate);
         OpenConfigurationFileCommand = CreateCommand(OpenConfigurationFileAsync, CanOperate);
         TestControllerCommand = CreateCommand(RunControllerTestAsync, CanOperate);
+        SaveShortcutsCommand = CreateCommand(SaveShortcutsAsync, CanOperate);
         ExitCommand = CreateCommand(ExitAsync, CanExit);
 
         _session.StateChanged += OnEngineStateChanged;
@@ -81,7 +83,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public AsyncRelayCommand OpenConfigurationFolderCommand { get; }
     public AsyncRelayCommand OpenConfigurationFileCommand { get; }
     public AsyncRelayCommand TestControllerCommand { get; }
+    public AsyncRelayCommand SaveShortcutsCommand { get; }
     public AsyncRelayCommand ExitCommand { get; }
+
+    public ShortcutEditorViewModel ShortcutEditor { get; }
 
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
     public string StatusMessage { get => _statusMessage; private set => SetProperty(ref _statusMessage, value); }
@@ -169,6 +174,36 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             ControllerTestStep = "Controller test cancelled.";
             StatusMessage = "Controller test cancelled.";
         });
+    }
+
+    private async Task SaveShortcutsAsync()
+    {
+        IsOperationInProgress = true;
+        RaiseCommandCanExecuteChanged();
+        LastError = string.Empty;
+        try
+        {
+            await ShortcutEditor.SaveAsync(CancellationToken.None);
+            if (!string.IsNullOrEmpty(ShortcutEditor.ValidationMessage))
+            {
+                ApplyOnUiThread(() => LastError = ShortcutEditor.ValidationMessage);
+                return;
+            }
+
+            ApplyOnUiThread(() => StatusMessage = "Shortcuts saved and applied.");
+        }
+        catch (Exception exception)
+        {
+            ReportOperationFailure(exception);
+        }
+        finally
+        {
+            ApplyOnUiThread(() =>
+            {
+                IsOperationInProgress = false;
+                RaiseCommandCanExecuteChanged();
+            });
+        }
     }
 
     private Task ExitAsync() => ExecuteEmergencyResetAsync(exitApplication: true);
@@ -326,6 +361,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         OpenConfigurationFolderCommand.RaiseCanExecuteChanged();
         OpenConfigurationFileCommand.RaiseCanExecuteChanged();
         TestControllerCommand.RaiseCanExecuteChanged();
+        SaveShortcutsCommand.RaiseCanExecuteChanged();
         ExitCommand.RaiseCanExecuteChanged();
     }
 

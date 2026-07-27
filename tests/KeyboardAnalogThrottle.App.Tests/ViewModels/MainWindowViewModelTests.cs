@@ -39,8 +39,48 @@ public sealed class MainWindowViewModelTests
         var operation = viewModel.StartCommand.ExecuteAsync(null);
 
         Assert.False(viewModel.StartCommand.CanExecute(null));
+        Assert.False(viewModel.SaveShortcutsCommand.CanExecute(null));
         engine.AllowStartToFinish();
         await operation;
+    }
+
+    [Fact]
+    public async Task Save_shortcuts_command_saves_the_editor_candidate_and_reports_success()
+    {
+        var engine = new BlockingEngine();
+        var configuration = new RecordingConfigurationService(AppConfiguration.CreateDefault());
+        using var viewModel = new MainWindowViewModel(
+            new TestSession(engine, new RecordingControllerTestService(engine)),
+            configuration,
+            new StubShellService(),
+            synchronizationContext: null);
+        viewModel.ShortcutEditor.ThrottlePrimaryBinding = "T";
+
+        await viewModel.SaveShortcutsCommand.ExecuteAsync(null);
+
+        var saved = Assert.Single(configuration.SavedConfigurations);
+        Assert.Equal("T", saved.Throttle.PrimaryBinding);
+        Assert.Equal("Shortcuts saved and applied.", viewModel.StatusMessage);
+        Assert.Empty(viewModel.LastError);
+    }
+
+    [Fact]
+    public async Task Save_shortcuts_command_projects_editor_validation_without_saving_or_discarding_field()
+    {
+        var engine = new BlockingEngine();
+        var configuration = new RecordingConfigurationService(AppConfiguration.CreateDefault());
+        using var viewModel = new MainWindowViewModel(
+            new TestSession(engine, new RecordingControllerTestService(engine)),
+            configuration,
+            new StubShellService(),
+            synchronizationContext: null);
+        viewModel.ShortcutEditor.ThrottlePrimaryBinding = "invalid binding";
+
+        await viewModel.SaveShortcutsCommand.ExecuteAsync(null);
+
+        Assert.Equal("invalid binding", viewModel.ShortcutEditor.ThrottlePrimaryBinding);
+        Assert.Equal("Binding 'invalid binding' is invalid.", viewModel.LastError);
+        Assert.Empty(configuration.SavedConfigurations);
     }
 
     [Fact]
@@ -390,6 +430,28 @@ public sealed class MainWindowViewModelTests
             Task.FromResult(ConfigurationReloadResult.Success);
 
         public Task SaveAsync(AppConfiguration configuration, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class RecordingConfigurationService(AppConfiguration current) : IConfigurationService
+    {
+        public AppConfiguration Current { get; } = current;
+
+        public List<AppConfiguration> SavedConfigurations { get; } = [];
+
+        public event Func<AppConfiguration, CancellationToken, Task>? ConfigurationChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public Task<ConfigurationReloadResult> ReloadAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(ConfigurationReloadResult.Success);
+
+        public Task SaveAsync(AppConfiguration configuration, CancellationToken cancellationToken)
+        {
+            SavedConfigurations.Add(configuration);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class StubShellService : IShellService
