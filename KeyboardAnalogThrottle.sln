@@ -15,6 +15,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{B2C24AEF
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KeyboardAnalogThrottle.Core.Tests", "tests\KeyboardAnalogThrottle.Core.Tests\KeyboardAnalogThrottle.Core.Tests.csproj", "{918C1BCA-1F60-4E37-9F42-9D7E2266FF99}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KeyboardAnalogThrottle.App.Tests", "tests\KeyboardAnalogThrottle.App.Tests\KeyboardAnalogThrottle.App.Tests.csproj", "{1C866FD7-93F4-4E98-BE1E-F12FE63F8BB8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -40,11 +42,16 @@ Global
 		{918C1BCA-1F60-4E37-9F42-9D7E2266FF99}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{918C1BCA-1F60-4E37-9F42-9D7E2266FF99}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{918C1BCA-1F60-4E37-9F42-9D7E2266FF99}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1C866FD7-93F4-4E98-BE1E-F12FE63F8BB8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1C866FD7-93F4-4E98-BE1E-F12FE63F8BB8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1C866FD7-93F4-4E98-BE1E-F12FE63F8BB8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1C866FD7-93F4-4E98-BE1E-F12FE63F8BB8}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{E4DD1D38-EA7D-46A7-BB94-C0FB6BEE62D1} = {2B0DAFB2-D079-4904-9F6D-6A421F75C09B}
 		{176FD0DD-2E59-40DC-85EA-5C17E3823046} = {2B0DAFB2-D079-4904-9F6D-6A421F75C09B}
 		{A1D3077E-5981-48F9-9FE3-EDA8F1D2CC0D} = {2B0DAFB2-D079-4904-9F6D-6A421F75C09B}
 		{918C1BCA-1F60-4E37-9F42-9D7E2266FF99} = {B2C24AEF-FFC1-4119-89E5-551DDD9633DA}
+		{1C866FD7-93F4-4E98-BE1E-F12FE63F8BB8} = {B2C24AEF-FFC1-4119-89E5-551DDD9633DA}
 	EndGlobalSection
 EndGlobal

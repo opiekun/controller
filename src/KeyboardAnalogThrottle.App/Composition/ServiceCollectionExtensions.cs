@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using KeyboardAnalogThrottle.App.Services;
+using KeyboardAnalogThrottle.App.ViewModels;
 using KeyboardAnalogThrottle.Core.Abstractions;
 using KeyboardAnalogThrottle.Core.Emulation;
 using KeyboardAnalogThrottle.Infrastructure.Windows.Controller;
@@ -46,7 +47,9 @@ public static class ServiceCollectionExtensions
             provider.GetRequiredService<IKeyboardInputSource>(),
             provider.GetRequiredService<IClock>()));
         services.AddSingleton<IControllerTestService, ControllerTestService>();
+        services.AddSingleton<IShellService, ShellService>();
         services.AddSingleton<ApplicationLifetimeService>();
+        services.AddSingleton<MainWindowViewModel>();
         services.AddTransient<MainWindow>();
         return services;
     }
