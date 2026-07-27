@@ -12,13 +12,29 @@ public static class ConfigurationValidator
         ArgumentNullException.ThrowIfNull(configuration);
 
         var errors = new List<ConfigurationValidationError>();
-        ValidateController(configuration.Controller, errors);
-        ValidateInput(configuration.Input, errors);
-        ValidateChannel("Throttle", configuration.Throttle, errors);
-        ValidateChannel("Brake", configuration.Brake, errors);
-        ValidateRatchet(configuration.Ratchet, errors);
-        ValidateLogging(configuration.Logging, errors);
+        ValidateRequiredSection("Controller", configuration.Controller, errors, ValidateController);
+        ValidateRequiredSection("Input", configuration.Input, errors, ValidateInput);
+        ValidateRequiredSection("Throttle", configuration.Throttle, errors, (channel, validationErrors) => ValidateChannel("Throttle", channel, validationErrors));
+        ValidateRequiredSection("Brake", configuration.Brake, errors, (channel, validationErrors) => ValidateChannel("Brake", channel, validationErrors));
+        ValidateRequiredSection("Ratchet", configuration.Ratchet, errors, ValidateRatchet);
+        ValidateRequiredSection("Logging", configuration.Logging, errors, ValidateLogging);
         return errors;
+    }
+
+    private static void ValidateRequiredSection<T>(
+        string sectionName,
+        T? section,
+        ICollection<ConfigurationValidationError> errors,
+        Action<T, ICollection<ConfigurationValidationError>> validate)
+        where T : class
+    {
+        if (section is null)
+        {
+            errors.Add(new(sectionName, $"{sectionName} configuration is required."));
+            return;
+        }
+
+        validate(section, errors);
     }
 
     private static void ValidateController(ControllerConfiguration controller, ICollection<ConfigurationValidationError> errors)
@@ -49,12 +65,12 @@ public static class ConfigurationValidator
     {
         ValidateBinding($"{channelName}.PrimaryBinding", channel.PrimaryBinding, errors);
 
-        if (channel.RiseSeconds <= 0)
+        if (!double.IsFinite(channel.RiseSeconds) || channel.RiseSeconds <= 0)
         {
             errors.Add(new($"{channelName}.RiseSeconds", $"{channelName} rise duration must be greater than zero."));
         }
 
-        if (channel.FallSeconds <= 0)
+        if (!double.IsFinite(channel.FallSeconds) || channel.FallSeconds <= 0)
         {
             errors.Add(new($"{channelName}.FallSeconds", $"{channelName} fall duration must be greater than zero."));
         }
@@ -67,7 +83,7 @@ public static class ConfigurationValidator
             errors.Add(new($"{channelName}.InitialLevel", $"{channelName} initial level must not exceed the maximum level."));
         }
 
-        if (channel.CustomExponent <= 0)
+        if (!double.IsFinite(channel.CustomExponent) || channel.CustomExponent <= 0)
         {
             errors.Add(new($"{channelName}.CustomExponent", $"{channelName} custom exponent must be greater than zero."));
         }
@@ -77,9 +93,15 @@ public static class ConfigurationValidator
 
     private static void ValidateFixedLevels(
         string channelName,
-        IReadOnlyDictionary<string, double> fixedLevels,
+        IReadOnlyDictionary<string, double>? fixedLevels,
         ICollection<ConfigurationValidationError> errors)
     {
+        if (fixedLevels is null)
+        {
+            errors.Add(new($"{channelName}.FixedLevels", $"{channelName} fixed levels are required."));
+            return;
+        }
+
         var structuralBindings = new Dictionary<string, string>(StringComparer.Ordinal);
 
         foreach (var (binding, level) in fixedLevels)
@@ -135,7 +157,7 @@ public static class ConfigurationValidator
         ICollection<ConfigurationValidationError> errors,
         bool allowZero = true)
     {
-        var isValid = allowZero ? level is >= 0 and <= 1 : level is > 0 and <= 1;
+        var isValid = double.IsFinite(level) && (allowZero ? level is >= 0 and <= 1 : level is > 0 and <= 1);
         if (!isValid)
         {
             errors.Add(new(propertyName, $"{displayName} must be between {(allowZero ? "0" : "greater than 0")} and 1."));

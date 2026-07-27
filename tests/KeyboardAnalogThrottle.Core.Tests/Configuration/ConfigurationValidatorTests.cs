@@ -4,6 +4,98 @@ namespace KeyboardAnalogThrottle.Core.Tests.Configuration;
 
 public sealed class ConfigurationValidatorTests
 {
+    public static IEnumerable<object[]> MissingSectionConfigurations()
+    {
+        var defaults = AppConfiguration.CreateDefault();
+
+        yield return [defaults with { Controller = null! }, "Controller", "Controller configuration is required."];
+        yield return [defaults with { Input = null! }, "Input", "Input configuration is required."];
+        yield return [defaults with { Throttle = null! }, "Throttle", "Throttle configuration is required."];
+        yield return [defaults with { Brake = null! }, "Brake", "Brake configuration is required."];
+        yield return [defaults with { Ratchet = null! }, "Ratchet", "Ratchet configuration is required."];
+        yield return [defaults with { Logging = null! }, "Logging", "Logging configuration is required."];
+    }
+
+    public static IEnumerable<object[]> NonFiniteValues()
+    {
+        yield return [double.NaN];
+        yield return [double.PositiveInfinity];
+        yield return [double.NegativeInfinity];
+    }
+
+    [Theory]
+    [MemberData(nameof(MissingSectionConfigurations))]
+    public void Rejects_missing_configuration_sections(
+        AppConfiguration configuration,
+        string propertyName,
+        string message)
+    {
+        Assert.Contains(
+            ConfigurationValidator.Validate(configuration),
+            error => error.PropertyName == propertyName && error.Message == message);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Rejects_null_fixed_levels(bool throttle)
+    {
+        var defaults = AppConfiguration.CreateDefault();
+        var configuration = throttle
+            ? defaults with { Throttle = defaults.Throttle with { FixedLevels = null! } }
+            : defaults with { Brake = defaults.Brake with { FixedLevels = null! } };
+        var channelName = throttle ? "Throttle" : "Brake";
+
+        Assert.Contains(
+            ConfigurationValidator.Validate(configuration),
+            error => error.PropertyName == $"{channelName}.FixedLevels" && error.Message == $"{channelName} fixed levels are required.");
+    }
+
+    [Theory]
+    [MemberData(nameof(NonFiniteValues))]
+    public void Rejects_non_finite_rise_durations(double duration)
+    {
+        var defaults = AppConfiguration.CreateDefault();
+        var configuration = defaults with
+        {
+            Throttle = defaults.Throttle with { RiseSeconds = duration }
+        };
+
+        Assert.Contains(
+            ConfigurationValidator.Validate(configuration),
+            error => error.Message == "Throttle rise duration must be greater than zero.");
+    }
+
+    [Theory]
+    [MemberData(nameof(NonFiniteValues))]
+    public void Rejects_non_finite_fall_durations(double duration)
+    {
+        var defaults = AppConfiguration.CreateDefault();
+        var configuration = defaults with
+        {
+            Throttle = defaults.Throttle with { FallSeconds = duration }
+        };
+
+        Assert.Contains(
+            ConfigurationValidator.Validate(configuration),
+            error => error.Message == "Throttle fall duration must be greater than zero.");
+    }
+
+    [Theory]
+    [MemberData(nameof(NonFiniteValues))]
+    public void Rejects_non_finite_custom_exponents(double exponent)
+    {
+        var defaults = AppConfiguration.CreateDefault();
+        var configuration = defaults with
+        {
+            Throttle = defaults.Throttle with { CustomExponent = exponent }
+        };
+
+        Assert.Contains(
+            ConfigurationValidator.Validate(configuration),
+            error => error.Message == "Throttle custom exponent must be greater than zero.");
+    }
+
     [Theory]
     [InlineData(29)]
     [InlineData(251)]
