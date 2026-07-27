@@ -1,0 +1,50 @@
+{
+  "controller": {
+    "updateRateHz": 120,
+    "maximumFrameDeltaMilliseconds": 50,
+    "inputLossTimeoutMilliseconds": 1000
+  },
+  "input": {
+    "suppressMappedKeys": false,
+    "throttleCutBinding": "Space",
+    "emergencyDisableBinding": "Ctrl+Alt+F12"
+  },
+  "throttle": {
+    "primaryBinding": "W",
+    "mode": "Ramp",
+    "riseSeconds": 1.0,
+    "fallSeconds": 0.5,
+    "initialLevel": 0.1,
+    "maximumLevel": 1.0,
+    "fixedLevels": {
+      "Shift+W": 0.5,
+      "Ctrl+W": 1.0
+    },
+    "curve": "Linear",
+    "customExponent": 1.0
+  },
+  "brake": {
+    "primaryBinding": "S",
+    "mode": "Ramp",
+    "riseSeconds": 0.5,
+    "fallSeconds": 0.5,
+    "initialLevel": 0.1,
+    "maximumLevel": 1.0,
+    "fixedLevels": {
+      "Shift+S": 0.5,
+      "Ctrl+S": 1.0
+    },
+    "curve": "Linear",
+    "customExponent": 1.0
+  },
+  "ratchet": {
+    "increaseBinding": "PageUp",
+    "decreaseBinding": "PageDown",
+    "resetBinding": "Home",
+    "step": 0.1
+  },
+  "logging": {
+    "minimumLevel": "Information",
+    "retainedFileCountLimit": 7
+  }
+}
