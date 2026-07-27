@@ -1,8 +1,6 @@
 using KeyboardAnalogThrottle.Core.Abstractions;
 using KeyboardAnalogThrottle.Core.Configuration;
-using KeyboardAnalogThrottle.Infrastructure.Windows.Keyboard;
 using KeyboardAnalogThrottle.Infrastructure.Windows.Lifecycle;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace KeyboardAnalogThrottle.App.Services;
@@ -18,8 +16,7 @@ public sealed class ApplicationLifetimeService : IAsyncDisposable
     private readonly WindowsLifecycleMonitor _windowsLifecycle;
     private readonly object _cleanupGate = new();
     private Task? _cleanup;
-    private IEmulationEngine? _engine;
-    private LowLevelKeyboardInputSource? _input;
+    private int _initialized;
     private int _disposed;
 
     public ApplicationLifetimeService(
@@ -46,16 +43,18 @@ public sealed class ApplicationLifetimeService : IAsyncDisposable
             return result;
         }
 
-        var engine = _services.GetRequiredService<IEmulationEngine>();
-        _input = _services.GetRequiredService<LowLevelKeyboardInputSource>();
-        _engine = engine;
-        engine.StateChanged += OnEngineStateChanged;
         _windowsLifecycle.Start();
+        Volatile.Write(ref _initialized, 1);
         return result;
     }
 
     public void RequestEmergencyStop()
     {
+        if (Volatile.Read(ref _initialized) == 0)
+        {
+            return;
+        }
+
         Task cleanup;
         lock (_cleanupGate)
         {
@@ -83,13 +82,12 @@ public sealed class ApplicationLifetimeService : IAsyncDisposable
         }
 
         _windowsLifecycle.Dispose();
-        var engine = _engine;
-        if (engine is not null)
+        var initialized = Volatile.Read(ref _initialized) != 0;
+        if (initialized)
         {
-            engine.StateChanged -= OnEngineStateChanged;
+            RequestEmergencyStop();
         }
 
-        RequestEmergencyStop();
         Task? cleanup;
         lock (_cleanupGate)
         {
@@ -101,25 +99,23 @@ public sealed class ApplicationLifetimeService : IAsyncDisposable
             await cleanup.ConfigureAwait(false);
         }
 
-        if (engine is not null)
+        if (initialized && GetSession() is { } session)
         {
-            await engine.DisposeAsync().ConfigureAwait(false);
+            await session.DisposeAsync().ConfigureAwait(false);
         }
     }
 
     private async Task EmergencyStopAsync()
     {
-        var engine = _engine;
-        var input = _input;
-        if (engine is null || input is null)
+        var session = GetSession();
+        if (session is null)
         {
             return;
         }
 
         try
         {
-            input.SetEngineRunning(isRunning: false);
-            await engine.EmergencyResetAsync(CancellationToken.None).ConfigureAwait(false);
+            await session.EmergencyResetAsync(CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -127,7 +123,7 @@ public sealed class ApplicationLifetimeService : IAsyncDisposable
         }
     }
 
-    private void OnEngineStateChanged(object? sender, KeyboardAnalogThrottle.Core.Emulation.EmulationState state) => _input?.SetEngineRunning(state.IsRunning);
+    private IEmulationSession? GetSession() => _services.GetService(typeof(IEmulationSession)) as IEmulationSession;
 
     private void ClearCompletedCleanup(Task completedCleanup)
     {

@@ -47,6 +47,18 @@ public static class ServiceCollectionExtensions
             provider.GetRequiredService<IKeyboardInputSource>(),
             provider.GetRequiredService<IClock>()));
         services.AddSingleton<IControllerTestService, ControllerTestService>();
+        services.AddSingleton<IEmulationSession>(provider =>
+        {
+            LowLevelKeyboardInputSource? input = null;
+            return new EmulationSession(
+                () =>
+                {
+                    input = provider.GetRequiredService<LowLevelKeyboardInputSource>();
+                    return provider.GetRequiredService<IEmulationEngine>();
+                },
+                provider.GetRequiredService<IControllerTestService>(),
+                isRunning => input?.SetEngineRunning(isRunning));
+        });
         services.AddSingleton<IShellService, ShellService>();
         services.AddSingleton<ApplicationLifetimeService>();
         services.AddSingleton<MainWindowViewModel>();

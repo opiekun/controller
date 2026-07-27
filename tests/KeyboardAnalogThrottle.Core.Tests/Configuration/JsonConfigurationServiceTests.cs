@@ -2,7 +2,6 @@ using KeyboardAnalogThrottle.App.Services;
 using KeyboardAnalogThrottle.Core.Abstractions;
 using KeyboardAnalogThrottle.Core.Configuration;
 using KeyboardAnalogThrottle.Core.Emulation;
-using KeyboardAnalogThrottle.Infrastructure.Windows.Keyboard;
 using KeyboardAnalogThrottle.Infrastructure.Windows.Lifecycle;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -130,9 +129,8 @@ public sealed class JsonConfigurationServiceTests : IAsyncLifetime
     public async Task Completed_emergency_stop_does_not_suppress_a_later_emergency_stop()
     {
         using var configuration = new JsonConfigurationService(ConfigPath);
-        var engine = new CountingEngine();
-        await using var input = new LowLevelKeyboardInputSource(AppConfiguration.CreateDefault());
-        var services = new FixedServiceProvider(engine, input);
+        var session = new CountingSession();
+        var services = new FixedServiceProvider(session);
         await using var lifetime = new ApplicationLifetimeService(
             configuration,
             services,
@@ -140,9 +138,9 @@ public sealed class JsonConfigurationServiceTests : IAsyncLifetime
         Assert.True((await lifetime.InitializeAsync(CancellationToken.None)).IsSuccess);
 
         lifetime.RequestEmergencyStop();
-        await WaitUntilAsync(() => engine.EmergencyResetCount == 1);
+        await WaitUntilAsync(() => session.EmergencyResetCount == 1);
         lifetime.RequestEmergencyStop();
-        await WaitUntilAsync(() => engine.EmergencyResetCount == 2);
+        await WaitUntilAsync(() => session.EmergencyResetCount == 2);
     }
 
     public Task InitializeAsync()
@@ -182,22 +180,24 @@ public sealed class JsonConfigurationServiceTests : IAsyncLifetime
         }
     }
 
-    private sealed class FixedServiceProvider(IEmulationEngine engine, LowLevelKeyboardInputSource input) : IServiceProvider
+    private sealed class FixedServiceProvider(IEmulationSession session) : IServiceProvider
     {
-        public object? GetService(Type serviceType) => serviceType == typeof(IEmulationEngine)
-            ? engine
-            : serviceType == typeof(LowLevelKeyboardInputSource)
-                ? input
-                : null;
+        public object? GetService(Type serviceType) => serviceType == typeof(IEmulationSession) ? session : null;
     }
 
-    private sealed class CountingEngine : IEmulationEngine
+    private sealed class CountingSession : IEmulationSession
     {
         public int EmergencyResetCount { get; private set; }
 
         public EmulationState State => EmulationState.Stopped;
 
         public event EventHandler<EmulationState>? StateChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public event EventHandler<ControllerTestProgress>? ControllerTestProgressChanged
         {
             add { }
             remove { }
@@ -212,6 +212,8 @@ public sealed class JsonConfigurationServiceTests : IAsyncLifetime
             EmergencyResetCount++;
             return Task.CompletedTask;
         }
+
+        public Task RunControllerTestAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

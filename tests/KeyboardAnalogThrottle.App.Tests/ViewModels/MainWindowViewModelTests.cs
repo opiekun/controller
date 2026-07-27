@@ -84,6 +84,79 @@ public sealed class MainWindowViewModelTests
         Assert.Equal("Controller test complete.", viewModel.ControllerTestStep);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Safety_reset_remains_available_while_controller_test_is_running(bool useResetCommand)
+    {
+        var controllerTest = new CancellableControllerTestService();
+        await using var session = new EmulationSession(() => new BlockingEngine(), controllerTest);
+        using var viewModel = new MainWindowViewModel(
+            session,
+            new StubConfigurationService(),
+            new StubShellService(),
+            synchronizationContext: null);
+
+        var testOperation = viewModel.TestControllerCommand.ExecuteAsync(null);
+        await controllerTest.Started.Task;
+        var resetCommand = useResetCommand ? viewModel.ResetCommand : viewModel.EmergencyStopCommand;
+
+        Assert.True(resetCommand.CanExecute(null));
+
+        await resetCommand.ExecuteAsync(null);
+        await testOperation;
+        Assert.True(controllerTest.CleanupCompleted.Task.IsCompleted);
+        Assert.Equal("Controller test cancelled.", viewModel.ControllerTestStep);
+        Assert.Empty(viewModel.LastError);
+    }
+
+    [Fact]
+    public async Task Exit_cancels_controller_test_and_waits_for_cleanup_before_closing()
+    {
+        var controllerTest = new CancellableControllerTestService();
+        var shell = new RecordingShellService(() => controllerTest.CleanupCompleted.Task.IsCompleted);
+        await using var session = new EmulationSession(() => new BlockingEngine(), controllerTest);
+        using var viewModel = new MainWindowViewModel(
+            session,
+            new StubConfigurationService(),
+            shell,
+            synchronizationContext: null);
+
+        var testOperation = viewModel.TestControllerCommand.ExecuteAsync(null);
+        await controllerTest.Started.Task;
+
+        Assert.True(viewModel.ExitCommand.CanExecute(null));
+
+        await viewModel.ExitCommand.ExecuteAsync(null);
+        await testOperation;
+        await shell.Exited.Task;
+
+        Assert.True(controllerTest.CleanupCompleted.Task.IsCompleted);
+        Assert.True(shell.ExitCalled);
+        Assert.True(shell.TestCleanupCompletedAtExit);
+        Assert.Equal("Controller test cancelled.", viewModel.ControllerTestStep);
+        Assert.Empty(viewModel.LastError);
+    }
+
+    [Fact]
+    public void Diagnostics_include_fixed_ratchet_cut_and_emergency_bindings()
+    {
+        var engine = new BlockingEngine();
+        using var viewModel = CreateViewModel(engine);
+
+        Assert.Contains("Throttle: W", viewModel.ActiveBindings);
+        Assert.Contains("Shift+W (50%)", viewModel.ActiveBindings);
+        Assert.Contains("Ctrl+W (100%)", viewModel.ActiveBindings);
+        Assert.Contains("Brake: S", viewModel.ActiveBindings);
+        Assert.Contains("Shift+S (50%)", viewModel.ActiveBindings);
+        Assert.Contains("Ctrl+S (100%)", viewModel.ActiveBindings);
+        Assert.Contains("increase PageUp", viewModel.ActiveBindings);
+        Assert.Contains("decrease PageDown", viewModel.ActiveBindings);
+        Assert.Contains("reset Home", viewModel.ActiveBindings);
+        Assert.Contains("Throttle cut: Space", viewModel.ActiveBindings);
+        Assert.Contains("Emergency: Ctrl+Alt+F12", viewModel.ActiveBindings);
+    }
+
     [Fact]
     public async Task Rapid_engine_snapshots_are_batched_to_the_latest_projection()
     {
@@ -115,11 +188,58 @@ public sealed class MainWindowViewModelTests
     private static MainWindowViewModel CreateViewModel(
         BlockingEngine engine,
         IControllerTestService? testService = null) => new(
-        engine,
+        new TestSession(engine, testService ?? new RecordingControllerTestService(engine)),
         new StubConfigurationService(),
-        testService ?? new RecordingControllerTestService(engine),
         new StubShellService(),
         synchronizationContext: null);
+
+    private sealed class TestSession : IEmulationSession
+    {
+        private readonly BlockingEngine _engine;
+        private readonly IControllerTestService _controllerTest;
+
+        public TestSession(BlockingEngine engine, IControllerTestService controllerTest)
+        {
+            _engine = engine;
+            _controllerTest = controllerTest;
+            _engine.StateChanged += OnStateChanged;
+            _controllerTest.ProgressChanged += OnProgressChanged;
+        }
+
+        public EmulationState State => _engine.State;
+
+        public event EventHandler<EmulationState>? StateChanged;
+
+        public event EventHandler<ControllerTestProgress>? ControllerTestProgressChanged;
+
+        public Task StartAsync(CancellationToken cancellationToken) => _engine.StartAsync(cancellationToken);
+
+        public Task StopAsync(CancellationToken cancellationToken) => _engine.StopAsync(cancellationToken);
+
+        public Task EmergencyResetAsync(CancellationToken cancellationToken) => _engine.EmergencyResetAsync(cancellationToken);
+
+        public async Task RunControllerTestAsync(CancellationToken cancellationToken)
+        {
+            if (_engine.State.IsRunning)
+            {
+                await _engine.StopAsync(cancellationToken);
+            }
+
+            await _controllerTest.RunAsync(cancellationToken);
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            _engine.StateChanged -= OnStateChanged;
+            _controllerTest.ProgressChanged -= OnProgressChanged;
+            return ValueTask.CompletedTask;
+        }
+
+        private void OnStateChanged(object? sender, EmulationState state) => StateChanged?.Invoke(this, state);
+
+        private void OnProgressChanged(object? sender, ControllerTestProgress progress) =>
+            ControllerTestProgressChanged?.Invoke(this, progress);
+    }
 
     private sealed class BlockingEngine : IEmulationEngine
     {
@@ -175,6 +295,32 @@ public sealed class MainWindowViewModelTests
         }
     }
 
+    private sealed class CancellableControllerTestService : IControllerTestService
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource CleanupCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public event EventHandler<ControllerTestProgress>? ProgressChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public async Task RunAsync(CancellationToken cancellationToken)
+        {
+            Started.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            finally
+            {
+                CleanupCompleted.TrySetResult();
+            }
+        }
+    }
+
     private sealed class StubConfigurationService : IConfigurationService
     {
         public AppConfiguration Current { get; } = AppConfiguration.CreateDefault();
@@ -192,6 +338,26 @@ public sealed class MainWindowViewModelTests
         public void OpenConfigurationFolder() { }
 
         public void ExitApplication() { }
+    }
+
+    private sealed class RecordingShellService(Func<bool> isTestCleanupComplete) : IShellService
+    {
+        public TaskCompletionSource Exited { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool ExitCalled { get; private set; }
+
+        public bool TestCleanupCompletedAtExit { get; private set; }
+
+        public void OpenConfigurationFile() { }
+
+        public void OpenConfigurationFolder() { }
+
+        public void ExitApplication()
+        {
+            TestCleanupCompletedAtExit = isTestCleanupComplete();
+            ExitCalled = true;
+            Exited.TrySetResult();
+        }
     }
 
     private sealed class RecordingSynchronizationContext : SynchronizationContext

@@ -3,6 +3,7 @@ using KeyboardAnalogThrottle.App.Services;
 using KeyboardAnalogThrottle.Core.Abstractions;
 using KeyboardAnalogThrottle.Core.Configuration;
 using KeyboardAnalogThrottle.Core.Emulation;
+using KeyboardAnalogThrottle.Infrastructure.Windows.Controller;
 using Microsoft.Extensions.Logging;
 
 namespace KeyboardAnalogThrottle.App.ViewModels;
@@ -14,9 +15,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 {
     private static readonly TimeSpan StateRefreshInterval = TimeSpan.FromSeconds(1d / 30d);
 
-    private readonly IEmulationEngine _engine;
+    private readonly IEmulationSession _session;
     private readonly IConfigurationService _configuration;
-    private readonly IControllerTestService _controllerTest;
     private readonly IShellService _shell;
     private readonly ILogger<MainWindowViewModel>? _logger;
     private readonly SynchronizationContext? _synchronizationContext;
@@ -24,6 +24,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private EmulationState? _pendingState;
     private bool _stateRefreshScheduled;
     private bool _isOperationInProgress;
+    private bool _isEmergencyResetInProgress;
     private bool _isControllerTestRunning;
     private bool _disposed;
     private string _status = "Stopped";
@@ -40,34 +41,32 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private string _inputHealth = "Healthy";
 
     public MainWindowViewModel(
-        IEmulationEngine engine,
+        IEmulationSession session,
         IConfigurationService configuration,
-        IControllerTestService controllerTest,
         IShellService shell,
         ILogger<MainWindowViewModel>? logger = null,
         SynchronizationContext? synchronizationContext = null)
     {
-        _engine = engine ?? throw new ArgumentNullException(nameof(engine));
+        _session = session ?? throw new ArgumentNullException(nameof(session));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-        _controllerTest = controllerTest ?? throw new ArgumentNullException(nameof(controllerTest));
         _shell = shell ?? throw new ArgumentNullException(nameof(shell));
         _logger = logger;
         _synchronizationContext = synchronizationContext ?? SynchronizationContext.Current;
 
         StartCommand = CreateCommand(StartAsync, CanStart);
         StopCommand = CreateCommand(StopAsync, CanStop);
-        EmergencyStopCommand = CreateCommand(EmergencyStopAsync, CanOperate);
-        ResetCommand = CreateCommand(EmergencyStopAsync, CanOperate);
+        EmergencyStopCommand = CreateCommand(EmergencyStopAsync, CanEmergencyReset);
+        ResetCommand = CreateCommand(EmergencyStopAsync, CanEmergencyReset);
         ReloadConfigurationCommand = CreateCommand(ReloadConfigurationAsync, CanOperate);
         OpenConfigurationFolderCommand = CreateCommand(OpenConfigurationFolderAsync, CanOperate);
         OpenConfigurationFileCommand = CreateCommand(OpenConfigurationFileAsync, CanOperate);
         TestControllerCommand = CreateCommand(RunControllerTestAsync, CanOperate);
-        ExitCommand = CreateCommand(ExitAsync, CanOperate);
+        ExitCommand = CreateCommand(ExitAsync, CanExit);
 
-        _engine.StateChanged += OnEngineStateChanged;
-        _controllerTest.ProgressChanged += OnControllerTestProgressChanged;
+        _session.StateChanged += OnEngineStateChanged;
+        _session.ControllerTestProgressChanged += OnControllerTestProgressChanged;
         ApplyConfiguration(_configuration.Current);
-        ApplyState(_engine.State);
+        ApplyState(_session.State);
     }
 
     public AsyncRelayCommand StartCommand { get; }
@@ -103,25 +102,25 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         _disposed = true;
-        _engine.StateChanged -= OnEngineStateChanged;
-        _controllerTest.ProgressChanged -= OnControllerTestProgressChanged;
+        _session.StateChanged -= OnEngineStateChanged;
+        _session.ControllerTestProgressChanged -= OnControllerTestProgressChanged;
     }
 
-    private bool CanOperate() => !_disposed && !IsOperationInProgress;
-    private bool CanStart() => CanOperate() && !_engine.State.IsRunning;
-    private bool CanStop() => CanOperate() && _engine.State.IsRunning;
+    private bool CanOperate() => !_disposed && !IsOperationInProgress && !_isEmergencyResetInProgress;
+    private bool CanStart() => CanOperate() && !_session.State.IsRunning;
+    private bool CanStop() => CanOperate() && _session.State.IsRunning;
+    private bool CanEmergencyReset() => !_disposed && !_isEmergencyResetInProgress;
+    private bool CanExit() => !_disposed && !_isEmergencyResetInProgress;
 
     private Task StartAsync() => ExecuteOperationAsync(
-        () => _engine.StartAsync(CancellationToken.None),
+        () => _session.StartAsync(CancellationToken.None),
         "Emulation started.");
 
     private Task StopAsync() => ExecuteOperationAsync(
-        () => _engine.StopAsync(CancellationToken.None),
+        () => _session.StopAsync(CancellationToken.None),
         "Emulation stopped.");
 
-    private Task EmergencyStopAsync() => ExecuteOperationAsync(
-        () => _engine.EmergencyResetAsync(CancellationToken.None),
-        "Emergency reset completed.");
+    private Task EmergencyStopAsync() => ExecuteEmergencyResetAsync(exitApplication: false);
 
     private async Task ReloadConfigurationAsync()
     {
@@ -155,26 +154,49 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             IsControllerTestRunning = true;
             ControllerTestStep = "Preparing controller test.";
-            if (_engine.State.IsRunning)
-            {
-                StatusMessage = "Stopping emulation before controller test.";
-                await _engine.StopAsync(CancellationToken.None);
-            }
-
-            await _controllerTest.RunAsync(CancellationToken.None);
+            await _session.RunControllerTestAsync(CancellationToken.None);
             ControllerTestStep = "Controller test complete.";
-        }, "Controller test completed.");
+        }, "Controller test completed.", () =>
+        {
+            ControllerTestStep = "Controller test cancelled.";
+            StatusMessage = "Controller test cancelled.";
+        });
     }
 
-    private async Task ExitAsync()
+    private Task ExitAsync() => ExecuteEmergencyResetAsync(exitApplication: true);
+
+    private async Task ExecuteEmergencyResetAsync(bool exitApplication)
     {
-        await ExecuteOperationAsync(
-            () => _engine.StopAsync(CancellationToken.None),
-            "Emulation stopped.");
-        ApplyOnUiThread(_shell.ExitApplication);
+        _isEmergencyResetInProgress = true;
+        RaiseCommandCanExecuteChanged();
+        LastError = string.Empty;
+        try
+        {
+            await _session.EmergencyResetAsync(CancellationToken.None);
+            ApplyOnUiThread(() => StatusMessage = "Emergency reset completed.");
+            if (exitApplication)
+            {
+                ApplyOnUiThread(_shell.ExitApplication);
+            }
+        }
+        catch (Exception exception)
+        {
+            ReportOperationFailure(exception);
+        }
+        finally
+        {
+            ApplyOnUiThread(() =>
+            {
+                _isEmergencyResetInProgress = false;
+                RaiseCommandCanExecuteChanged();
+            });
+        }
     }
 
-    private async Task ExecuteOperationAsync(Func<Task> operation, string successMessage)
+    private async Task ExecuteOperationAsync(
+        Func<Task> operation,
+        string successMessage,
+        Action? cancellationHandler = null)
     {
         IsOperationInProgress = true;
         RaiseCommandCanExecuteChanged();
@@ -184,14 +206,13 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             await operation();
             ApplyOnUiThread(() => StatusMessage = successMessage);
         }
+        catch (OperationCanceledException) when (cancellationHandler is not null)
+        {
+            ApplyOnUiThread(cancellationHandler);
+        }
         catch (Exception exception)
         {
-            _logger?.LogError(exception, "Dashboard operation failed.");
-            ApplyOnUiThread(() =>
-            {
-                LastError = exception.Message;
-                StatusMessage = "Operation failed. Review the error details.";
-            });
+            ReportOperationFailure(exception);
         }
         finally
         {
@@ -260,7 +281,22 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private void ApplyConfiguration(AppConfiguration configuration)
     {
         IsSuppressionEnabled = configuration.Input.SuppressMappedKeys;
-        ActiveBindings = $"Throttle: {configuration.Throttle.PrimaryBinding} | Brake: {configuration.Brake.PrimaryBinding} | Cut: {configuration.Input.ThrottleCutBinding}";
+        ActiveBindings = $"Throttle: {configuration.Throttle.PrimaryBinding}; fixed: {FormatFixedLevels(configuration.Throttle)} | " +
+            $"Brake: {configuration.Brake.PrimaryBinding}; fixed: {FormatFixedLevels(configuration.Brake)} | " +
+            $"Ratchet: increase {configuration.Ratchet.IncreaseBinding}, decrease {configuration.Ratchet.DecreaseBinding}, reset {configuration.Ratchet.ResetBinding} | " +
+            $"Throttle cut: {configuration.Input.ThrottleCutBinding} | Emergency: {configuration.Input.EmergencyDisableBinding}";
+    }
+
+    private void ReportOperationFailure(Exception exception)
+    {
+        _logger?.LogError(exception, "Dashboard operation failed.");
+        ApplyOnUiThread(() =>
+        {
+            LastError = exception.Message;
+            StatusMessage = exception is VigemDriverException
+                ? "Virtual controller driver unavailable. Install and enable ViGEmBus, then retry."
+                : "Operation failed. Review the error details.";
+        });
     }
 
     private void ApplyOnUiThread(Action action)
@@ -289,6 +325,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private AsyncRelayCommand CreateCommand(Func<Task> execute, Func<bool> canExecute) =>
         new(execute, canExecute, _synchronizationContext);
+
+    private static string FormatFixedLevels(ChannelConfiguration channel) => channel.FixedLevels.Count == 0
+        ? "none"
+        : string.Join(", ", channel.FixedLevels
+            .OrderBy(static entry => entry.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(static entry => $"{entry.Key} ({entry.Value:P0})"));
 
     private static double ToPercentage(double value) => Math.Round(Math.Clamp(value, 0d, 1d) * 100d, 1);
 }
