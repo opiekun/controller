@@ -1,4 +1,5 @@
 using KeyboardAnalogThrottle.Core.Abstractions;
+using KeyboardAnalogThrottle.Core.Configuration;
 using KeyboardAnalogThrottle.Core.Emulation;
 
 namespace KeyboardAnalogThrottle.App.Services;
@@ -20,6 +21,8 @@ public interface IEmulationSession : IAsyncDisposable
 
     Task EmergencyResetAsync(CancellationToken cancellationToken);
 
+    Task ReconfigureAsync(CancellationToken cancellationToken);
+
     Task RunControllerTestAsync(CancellationToken cancellationToken);
 }
 
@@ -27,6 +30,7 @@ public sealed class EmulationSession : IEmulationSession
 {
     private readonly Func<IEmulationEngine> _createEngine;
     private readonly IControllerTestService _controllerTest;
+    private readonly IConfigurationService? _configuration;
     private readonly Action<bool>? _setInputRunning;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
     private readonly object _testGate = new();
@@ -38,12 +42,18 @@ public sealed class EmulationSession : IEmulationSession
     public EmulationSession(
         Func<IEmulationEngine> createEngine,
         IControllerTestService controllerTest,
-        Action<bool>? setInputRunning = null)
+        Action<bool>? setInputRunning = null,
+        IConfigurationService? configuration = null)
     {
         _createEngine = createEngine ?? throw new ArgumentNullException(nameof(createEngine));
         _controllerTest = controllerTest ?? throw new ArgumentNullException(nameof(controllerTest));
         _setInputRunning = setInputRunning;
+        _configuration = configuration;
         _controllerTest.ProgressChanged += OnControllerTestProgressChanged;
+        if (_configuration is not null)
+        {
+            _configuration.ConfigurationChanged += OnConfigurationChangedAsync;
+        }
     }
 
     public EmulationState State => Volatile.Read(ref _state);
@@ -97,6 +107,41 @@ public sealed class EmulationSession : IEmulationSession
             if (_engine is not null)
             {
                 await _engine.EmergencyResetAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    public async Task ReconfigureAsync(CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            var previous = _engine;
+            if (previous is null)
+            {
+                return;
+            }
+
+            var restart = previous.State.IsRunning;
+            if (restart)
+            {
+                await previous.StopAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            previous.StateChanged -= OnEngineStateChanged;
+            _engine = null;
+            await previous.DisposeAsync().ConfigureAwait(false);
+            PublishState(EmulationState.Stopped);
+
+            if (restart)
+            {
+                await GetOrCreateEngine().StartAsync(cancellationToken).ConfigureAwait(false);
             }
         }
         finally
@@ -184,6 +229,10 @@ public sealed class EmulationSession : IEmulationSession
         {
             _setInputRunning?.Invoke(false);
             _controllerTest.ProgressChanged -= OnControllerTestProgressChanged;
+            if (_configuration is not null)
+            {
+                _configuration.ConfigurationChanged -= OnConfigurationChangedAsync;
+            }
             var engine = _engine;
             _engine = null;
             if (engine is not null)
@@ -219,6 +268,9 @@ public sealed class EmulationSession : IEmulationSession
             _controllerTestCancellation?.Cancel();
         }
     }
+
+    private Task OnConfigurationChangedAsync(AppConfiguration configuration, CancellationToken cancellationToken) =>
+        ReconfigureAsync(cancellationToken);
 
     private void OnEngineStateChanged(object? sender, EmulationState state) => PublishState(state);
 

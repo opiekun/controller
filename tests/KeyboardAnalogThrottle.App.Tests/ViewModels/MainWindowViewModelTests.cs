@@ -178,14 +178,18 @@ public sealed class MainWindowViewModelTests
         using var viewModel = CreateViewModel(engine);
 
         Assert.Contains("Throttle: W", viewModel.ActiveBindings);
-        Assert.Contains("Shift+W (50%)", viewModel.ActiveBindings);
-        Assert.Contains("Ctrl+W (100%)", viewModel.ActiveBindings);
+        Assert.Contains("Ctrl+W (25%)", viewModel.ActiveBindings);
+        Assert.Contains("Alt+W (50%)", viewModel.ActiveBindings);
+        Assert.Contains("Shift+W (75%)", viewModel.ActiveBindings);
+        Assert.Contains("Ctrl+Shift+W (100%)", viewModel.ActiveBindings);
         Assert.Contains("Brake: S", viewModel.ActiveBindings);
-        Assert.Contains("Shift+S (50%)", viewModel.ActiveBindings);
-        Assert.Contains("Ctrl+S (100%)", viewModel.ActiveBindings);
-        Assert.Contains("increase PageUp", viewModel.ActiveBindings);
-        Assert.Contains("decrease PageDown", viewModel.ActiveBindings);
-        Assert.Contains("reset Home", viewModel.ActiveBindings);
+        Assert.Contains("Ctrl+S (25%)", viewModel.ActiveBindings);
+        Assert.Contains("Alt+S (50%)", viewModel.ActiveBindings);
+        Assert.Contains("Shift+S (75%)", viewModel.ActiveBindings);
+        Assert.Contains("Ctrl+Shift+S (100%)", viewModel.ActiveBindings);
+        Assert.Contains("increase W", viewModel.ActiveBindings);
+        Assert.Contains("decrease Q", viewModel.ActiveBindings);
+        Assert.Contains("reset Space", viewModel.ActiveBindings);
         Assert.Contains("Throttle cut: Space", viewModel.ActiveBindings);
         Assert.Contains("Emergency: Ctrl+Alt+F12", viewModel.ActiveBindings);
     }
@@ -250,6 +254,8 @@ public sealed class MainWindowViewModelTests
         public Task StopAsync(CancellationToken cancellationToken) => _engine.StopAsync(cancellationToken);
 
         public Task EmergencyResetAsync(CancellationToken cancellationToken) => _engine.EmergencyResetAsync(cancellationToken);
+
+        public Task ReconfigureAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
         public async Task RunControllerTestAsync(CancellationToken cancellationToken)
         {
@@ -357,6 +363,8 @@ public sealed class MainWindowViewModelTests
     private sealed class StubConfigurationService : IConfigurationService
     {
         public AppConfiguration Current { get; } = AppConfiguration.CreateDefault();
+
+        public event Func<AppConfiguration, CancellationToken, Task>? ConfigurationChanged;
 
         public Task<ConfigurationReloadResult> ReloadAsync(CancellationToken cancellationToken) =>
             Task.FromResult(ConfigurationReloadResult.Success);

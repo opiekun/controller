@@ -67,6 +67,8 @@ public sealed class JsonConfigurationService : IConfigurationService, IDisposabl
         }
     }
 
+    public event Func<AppConfiguration, CancellationToken, Task>? ConfigurationChanged;
+
     public async Task<ConfigurationReloadResult> ReloadAsync(CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
@@ -105,10 +107,7 @@ public sealed class JsonConfigurationService : IConfigurationService, IDisposabl
                 return ConfigurationReloadResult.Failure(errors);
             }
 
-            lock (_currentGate)
-            {
-                _current = candidate;
-            }
+            await PublishConfigurationAsync(candidate, cancellationToken).ConfigureAwait(false);
 
             return ConfigurationReloadResult.Success;
         }
@@ -140,10 +139,7 @@ public sealed class JsonConfigurationService : IConfigurationService, IDisposabl
         try
         {
             await WriteAtomicallyAsync(configuration, replaceExisting: true, cancellationToken: cancellationToken).ConfigureAwait(false);
-            lock (_currentGate)
-            {
-                _current = configuration;
-            }
+            await PublishConfigurationAsync(configuration, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -238,6 +234,39 @@ public sealed class JsonConfigurationService : IConfigurationService, IDisposabl
             {
                 File.Delete(temporaryPath);
             }
+        }
+    }
+
+    private async Task PublishConfigurationAsync(AppConfiguration configuration, CancellationToken cancellationToken)
+    {
+        AppConfiguration previous;
+        lock (_currentGate)
+        {
+            previous = _current;
+            _current = configuration;
+        }
+
+        var handlers = ConfigurationChanged;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (Func<AppConfiguration, CancellationToken, Task> handler in handlers.GetInvocationList())
+            {
+                await handler(configuration, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            lock (_currentGate)
+            {
+                _current = previous;
+            }
+
+            throw;
         }
     }
 

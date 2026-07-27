@@ -36,16 +36,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<JsonConfigurationService>();
         services.AddSingleton<IConfigurationService>(provider => provider.GetRequiredService<JsonConfigurationService>());
         services.AddSingleton<VigemControllerFactory>();
-        services.AddSingleton<IVirtualController>(provider => provider.GetRequiredService<VigemControllerFactory>().Create());
-        services.AddSingleton<LowLevelKeyboardInputSource>(provider =>
-            new LowLevelKeyboardInputSource(provider.GetRequiredService<IConfigurationService>().Current));
-        services.AddSingleton<IKeyboardInputSource>(provider => provider.GetRequiredService<LowLevelKeyboardInputSource>());
         services.AddSingleton<IClock, StopwatchClock>();
-        services.AddSingleton<IEmulationEngine>(provider => new EmulationEngine(
-            provider.GetRequiredService<IConfigurationService>().Current,
-            provider.GetRequiredService<IVirtualController>(),
-            provider.GetRequiredService<IKeyboardInputSource>(),
-            provider.GetRequiredService<IClock>()));
         services.AddSingleton<IControllerTestService, ControllerTestService>();
         services.AddSingleton<IEmulationSession>(provider =>
         {
@@ -53,11 +44,17 @@ public static class ServiceCollectionExtensions
             return new EmulationSession(
                 () =>
                 {
-                    input = provider.GetRequiredService<LowLevelKeyboardInputSource>();
-                    return provider.GetRequiredService<IEmulationEngine>();
+                    var configuration = provider.GetRequiredService<IConfigurationService>().Current;
+                    input = new LowLevelKeyboardInputSource(configuration);
+                    return new EmulationEngine(
+                        configuration,
+                        provider.GetRequiredService<VigemControllerFactory>().Create(),
+                        input,
+                        provider.GetRequiredService<IClock>());
                 },
                 provider.GetRequiredService<IControllerTestService>(),
-                isRunning => input?.SetEngineRunning(isRunning));
+                isRunning => input?.SetEngineRunning(isRunning),
+                provider.GetRequiredService<IConfigurationService>());
         });
         services.AddSingleton<IShellService, ShellService>();
         services.AddSingleton<ApplicationLifetimeService>();

@@ -10,10 +10,10 @@ public sealed class RatchetInputStrategyTests
     public void Consumes_each_distinct_down_transition_once_and_preserves_value_after_release()
     {
         var strategy = new RatchetInputStrategy(new RatchetConfiguration { Step = .25 });
-        var increment = new InputSnapshot([InputKey.PageUp], [new KeyTransition(InputKey.PageUp, true, 1)]);
+        var increment = new InputSnapshot([InputKey.W], [new KeyTransition(InputKey.W, true, 1)]);
 
         var raised = strategy.Update(increment, 0, TimeSpan.Zero, ChannelConfiguration.DefaultThrottle);
-        var held = strategy.Update(new InputSnapshot([InputKey.PageUp], []), raised, TimeSpan.Zero, ChannelConfiguration.DefaultThrottle);
+        var held = strategy.Update(new InputSnapshot([InputKey.W], []), raised, TimeSpan.Zero, ChannelConfiguration.DefaultThrottle);
         var released = strategy.Update(InputSnapshot.Empty, held, TimeSpan.Zero, ChannelConfiguration.DefaultThrottle);
 
         Assert.Equal(.25, raised, 6);
@@ -27,9 +27,9 @@ public sealed class RatchetInputStrategyTests
         var strategy = new RatchetInputStrategy(new RatchetConfiguration { Step = .4 });
         var channel = ChannelConfiguration.DefaultThrottle with { MaximumLevel = .7 };
 
-        var clamped = strategy.Update(new InputSnapshot([InputKey.PageUp], [new KeyTransition(InputKey.PageUp, true, 1)]), .5, TimeSpan.Zero, channel);
-        var decremented = strategy.Update(new InputSnapshot([InputKey.PageDown], [new KeyTransition(InputKey.PageDown, true, 2)]), clamped, TimeSpan.Zero, channel);
-        var reset = strategy.Update(new InputSnapshot([InputKey.Home], [new KeyTransition(InputKey.Home, true, 3)]), decremented, TimeSpan.Zero, channel);
+        var clamped = strategy.Update(new InputSnapshot([InputKey.W], [new KeyTransition(InputKey.W, true, 1)]), .5, TimeSpan.Zero, channel);
+        var decremented = strategy.Update(new InputSnapshot([InputKey.Q], [new KeyTransition(InputKey.Q, true, 2)]), clamped, TimeSpan.Zero, channel);
+        var reset = strategy.Update(new InputSnapshot([InputKey.Space], [new KeyTransition(InputKey.Space, true, 3)]), decremented, TimeSpan.Zero, channel);
 
         Assert.Equal(.7, clamped, 6);
         Assert.Equal(.3, decremented, 6);
@@ -51,11 +51,11 @@ public sealed class RatchetInputStrategyTests
         var strategy = new RatchetInputStrategy(new RatchetConfiguration { Step = .25 });
         var transitions = new[]
         {
-            new KeyTransition(InputKey.PageUp, true, 1),
-            new KeyTransition(InputKey.PageDown, true, 2),
-            new KeyTransition(InputKey.PageUp, true, 3)
+            new KeyTransition(InputKey.W, true, 1),
+            new KeyTransition(InputKey.Q, true, 2),
+            new KeyTransition(InputKey.W, true, 3)
         };
-        var input = new InputSnapshot([InputKey.PageUp, InputKey.PageDown], transitions);
+        var input = new InputSnapshot([InputKey.W, InputKey.Q], transitions);
 
         Assert.Equal(.5, strategy.Update(input, .25, TimeSpan.Zero, ChannelConfiguration.DefaultThrottle), 6);
     }

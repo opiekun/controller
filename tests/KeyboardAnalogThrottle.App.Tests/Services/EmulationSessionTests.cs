@@ -96,6 +96,25 @@ public sealed class EmulationSessionTests
         Assert.False(session.State.IsControllerConnected);
     }
 
+    [Fact]
+    public async Task Reconfigure_recreates_a_running_engine_and_restores_emulation()
+    {
+        var first = new RecordingEngine();
+        var second = new RecordingEngine();
+        var engines = new Queue<IEmulationEngine>([first, second]);
+        await using var session = new EmulationSession(
+            () => engines.Dequeue(),
+            new BlockingControllerTestService());
+
+        await session.StartAsync(CancellationToken.None);
+        await session.ReconfigureAsync(CancellationToken.None);
+
+        Assert.Equal(1, first.StopCalls);
+        Assert.Equal(1, first.DisposeCalls);
+        Assert.Equal(1, second.StartCalls);
+        Assert.True(session.State.IsRunning);
+    }
+
     private static async Task IgnoreFailureAsync(Task task)
     {
         try
@@ -117,6 +136,8 @@ public sealed class EmulationSessionTests
         public int StartCalls { get; private set; }
 
         public int StopCalls { get; private set; }
+
+        public int DisposeCalls { get; private set; }
 
         public bool BlockStart { get; init; }
 
@@ -147,7 +168,11 @@ public sealed class EmulationSessionTests
 
         public Task EmergencyResetAsync(CancellationToken cancellationToken) => StopAsync(cancellationToken);
 
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync()
+        {
+            DisposeCalls++;
+            return ValueTask.CompletedTask;
+        }
 
         public void AllowStartToFinish() => _startGate.TrySetResult();
     }

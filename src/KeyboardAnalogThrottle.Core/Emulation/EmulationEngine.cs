@@ -52,17 +52,17 @@ public sealed class EmulationEngine : IEmulationEngine
         IVirtualController controller,
         IKeyboardInputSource input,
         IClock clock,
-        ConflictMode conflictMode = ConflictMode.BrakeWins,
-        bool simultaneousInputEnabled = false,
-        bool toggleThrottleCut = false)
+        ConflictMode? conflictMode = null,
+        bool? simultaneousInputEnabled = null,
+        bool? toggleThrottleCut = null)
     {
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _controller = controller ?? throw new ArgumentNullException(nameof(controller));
         _input = input ?? throw new ArgumentNullException(nameof(input));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
-        _conflictMode = conflictMode;
-        _simultaneousInputEnabled = simultaneousInputEnabled;
-        _toggleThrottleCut = toggleThrottleCut;
+        _conflictMode = conflictMode ?? configuration.Controller.ConflictMode;
+        _simultaneousInputEnabled = simultaneousInputEnabled ?? configuration.Controller.AllowSimultaneousThrottleAndBrake;
+        _toggleThrottleCut = toggleThrottleCut ?? configuration.Input.ThrottleCutMode == ThrottleCutMode.Toggle;
 
         _throttleBinding = BindingParser.Parse(configuration.Throttle.PrimaryBinding);
         _brakeBinding = BindingParser.Parse(configuration.Brake.PrimaryBinding);

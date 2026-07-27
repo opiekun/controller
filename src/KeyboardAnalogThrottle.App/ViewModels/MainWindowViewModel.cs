@@ -135,7 +135,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             }
 
             ApplyOnUiThread(() => ApplyConfiguration(_configuration.Current));
-        }, "Configuration reloaded. Restart the application to apply changes.");
+        }, "Configuration reloaded and applied.");
     }
 
     private Task OpenConfigurationFolderAsync() => ExecuteOperationAsync(() =>

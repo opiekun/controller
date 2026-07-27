@@ -2,45 +2,52 @@
   "controller": {
     "updateRateHz": 120,
     "maximumFrameDeltaMilliseconds": 50,
-    "inputLossTimeoutMilliseconds": 1000
+    "inputLossTimeoutMilliseconds": 1000,
+    "allowSimultaneousThrottleAndBrake": true,
+    "conflictMode": "BrakeWins"
   },
   "input": {
-    "suppressMappedKeys": false,
+    "suppressMappedKeys": true,
     "throttleCutBinding": "Space",
+    "throttleCutMode": "Hold",
     "emergencyDisableBinding": "Ctrl+Alt+F12"
   },
   "throttle": {
     "primaryBinding": "W",
     "mode": "Ramp",
-    "riseSeconds": 1.0,
-    "fallSeconds": 0.5,
-    "initialLevel": 0.1,
+    "riseSeconds": 1.2,
+    "fallSeconds": 0.45,
+    "initialLevel": 0.08,
     "maximumLevel": 1.0,
     "fixedLevels": {
-      "Shift+W": 0.5,
-      "Ctrl+W": 1.0
+      "Ctrl+W": 0.25,
+      "Alt+W": 0.5,
+      "Shift+W": 0.75,
+      "Ctrl+Shift+W": 1.0
     },
-    "curve": "Linear",
+    "curve": "EaseOut",
     "customExponent": 1.0
   },
   "brake": {
     "primaryBinding": "S",
     "mode": "Ramp",
-    "riseSeconds": 0.5,
-    "fallSeconds": 0.5,
-    "initialLevel": 0.1,
+    "riseSeconds": 0.3,
+    "fallSeconds": 0.2,
+    "initialLevel": 0.0,
     "maximumLevel": 1.0,
     "fixedLevels": {
-      "Shift+S": 0.5,
-      "Ctrl+S": 1.0
+      "Ctrl+S": 0.25,
+      "Alt+S": 0.5,
+      "Shift+S": 0.75,
+      "Ctrl+Shift+S": 1.0
     },
     "curve": "Linear",
     "customExponent": 1.0
   },
   "ratchet": {
-    "increaseBinding": "PageUp",
-    "decreaseBinding": "PageDown",
-    "resetBinding": "Home",
+    "increaseBinding": "W",
+    "decreaseBinding": "Q",
+    "resetBinding": "Space",
     "step": 0.1
   },
   "logging": {

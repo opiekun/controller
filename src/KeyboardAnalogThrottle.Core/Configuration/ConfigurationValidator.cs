@@ -1,4 +1,5 @@
 using KeyboardAnalogThrottle.Core.Bindings;
+using KeyboardAnalogThrottle.Core.Curves;
 using KeyboardAnalogThrottle.Core.Emulation;
 
 namespace KeyboardAnalogThrottle.Core.Configuration;
@@ -81,6 +82,11 @@ public static class ConfigurationValidator
         if (!Enum.IsDefined(channel.Mode))
         {
             errors.Add(new($"{channelName}.Mode", $"{channelName} mode is invalid."));
+        }
+
+        if (!Enum.TryParse<CurveKind>(channel.Curve, ignoreCase: true, out var curve) || !Enum.IsDefined(curve))
+        {
+            errors.Add(new($"{channelName}.Curve", $"{channelName} curve is invalid."));
         }
 
         if (!double.IsFinite(channel.RiseSeconds) || channel.RiseSeconds <= 0)

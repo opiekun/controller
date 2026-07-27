@@ -47,6 +47,25 @@ public sealed class JsonConfigurationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Valid_reload_waits_for_runtime_configuration_application()
+    {
+        await File.WriteAllTextAsync(ConfigPath, "{ \"controller\": { \"updateRateHz\": 144 } }");
+        using var service = new JsonConfigurationService(ConfigPath);
+        var applied = false;
+        service.ConfigurationChanged += async (configuration, cancellationToken) =>
+        {
+            await Task.Yield();
+            cancellationToken.ThrowIfCancellationRequested();
+            applied = configuration.Controller.UpdateRateHz == 144;
+        };
+
+        var result = await service.ReloadAsync(CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(applied);
+    }
+
+    [Fact]
     public async Task Invalid_reload_preserves_the_previous_valid_configuration()
     {
         using var service = new JsonConfigurationService(ConfigPath);
@@ -212,6 +231,8 @@ public sealed class JsonConfigurationServiceTests : IAsyncLifetime
             EmergencyResetCount++;
             return Task.CompletedTask;
         }
+
+        public Task ReconfigureAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task RunControllerTestAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 

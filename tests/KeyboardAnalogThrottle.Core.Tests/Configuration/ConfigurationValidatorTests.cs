@@ -286,6 +286,20 @@ public sealed class ConfigurationValidatorTests
             error => error.PropertyName == "Throttle.Mode" && error.Message == "Throttle mode is invalid.");
     }
 
+    [Fact]
+    public void Rejects_unknown_output_curves()
+    {
+        var defaults = AppConfiguration.CreateDefault();
+        var configuration = defaults with
+        {
+            Throttle = defaults.Throttle with { Curve = "Turbo" }
+        };
+
+        Assert.Contains(
+            ConfigurationValidator.Validate(configuration),
+            error => error.PropertyName == "Throttle.Curve" && error.Message == "Throttle curve is invalid.");
+    }
+
     private static void AssertFixedLevels(ChannelConfiguration channel, string key)
     {
         Assert.Equal(.25d, channel.FixedLevels[$"Ctrl+{key}"]);

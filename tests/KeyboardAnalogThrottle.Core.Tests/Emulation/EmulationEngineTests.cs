@@ -169,11 +169,11 @@ public sealed class EmulationEngineTests
         await using var engine = CreateEngine(controller, input);
 
         await engine.StartAsync(CancellationToken.None);
-        await WaitUntilAsync(() => controller.SubmitCount == 1);
+        await WaitUntilAsync(() => controller.SubmitCount == 1 && engine.State.Throttle > 0d);
 
-        Assert.Equal(.1d, engine.State.RawThrottle, 6);
-        Assert.Equal(.5d, engine.State.Throttle, 6);
-        Assert.Equal((byte)128, controller.RightTrigger);
+        Assert.Equal(.08d, engine.State.RawThrottle, 6);
+        Assert.Equal(.9375d, engine.State.Throttle, 6);
+        Assert.Equal((byte)239, controller.RightTrigger);
     }
 
     [Fact]
