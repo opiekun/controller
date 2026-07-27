@@ -25,6 +25,7 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
     private const int VkLeftMenu = 0xA4;
     private const int VkRightMenu = 0xA5;
 
+    private readonly object _disposalGate = new();
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private readonly KeyboardStateStore _stateStore = new();
     private readonly SuppressionPolicy _suppressionPolicy;
@@ -32,6 +33,7 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
     private readonly IKeyboardHookThread _hookThread;
     private readonly Action<KeyboardHookCallbackStage>? _callbackStage;
     private readonly CaptureSuppressedKeys _suppressedKeys = new();
+    private Task? _disposal;
     private KeyboardHookSession? _session;
     private int _engineIsRunning;
     private int _disposed;
@@ -133,19 +135,24 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
 
     public InputSnapshot GetSnapshot() => _stateStore.GetSnapshot();
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+        lock (_disposalGate)
         {
-            try
+            if (_disposal is null || _disposal.IsFaulted || _disposal.IsCanceled)
             {
-                await StopAsync(CancellationToken.None).ConfigureAwait(false);
+                _disposal = DisposeCoreAsync();
             }
-            finally
-            {
-                await _hookThread.DisposeAsync().ConfigureAwait(false);
-            }
+
+            return new ValueTask(_disposal);
         }
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        Interlocked.Exchange(ref _disposed, 1);
+        await StopAsync(CancellationToken.None).ConfigureAwait(false);
+        await _hookThread.DisposeAsync().ConfigureAwait(false);
     }
 
     private KeyboardHookSession InstallSession(KeyboardHookInstallation installation)

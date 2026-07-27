@@ -43,6 +43,8 @@ internal sealed class KeyboardHookThread : IKeyboardHookThread
         _thread.Start();
     }
 
+    internal bool IsAlive => _thread.IsAlive;
+
     public Task InvokeAsync(Action operation)
     {
         ArgumentNullException.ThrowIfNull(operation);

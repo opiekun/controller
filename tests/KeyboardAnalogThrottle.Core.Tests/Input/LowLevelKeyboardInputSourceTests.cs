@@ -77,6 +77,42 @@ public sealed class LowLevelKeyboardInputSourceTests
     }
 
     [Fact]
+    public async Task Disposal_retries_a_failed_stop_and_shared_callers_wait_for_unhook_before_thread_exit()
+    {
+        var messageLoop = new FakeKeyboardHookMessageLoop();
+        var hookThread = new KeyboardHookThread(messageLoop);
+        var platform = new FakeKeyboardHookPlatform(PassedThrough);
+        var source = new LowLevelKeyboardInputSource(
+            Configuration(),
+            platform,
+            hookThread: hookThread);
+
+        await source.StartAsync(CancellationToken.None);
+        messageLoop.FailNextPost();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => source.DisposeAsync().AsTask());
+
+        Assert.Equal(["install"], platform.LifecycleOperations);
+        Assert.True(hookThread.IsAlive);
+
+        platform.PauseNextUnhook();
+        var retry = source.DisposeAsync().AsTask();
+        Assert.True(platform.UnhookStarted.Wait(TimeSpan.FromSeconds(5)));
+        var concurrent = source.DisposeAsync().AsTask();
+
+        Assert.Same(retry, concurrent);
+        Assert.False(retry.IsCompleted);
+        Assert.True(hookThread.IsAlive);
+
+        platform.ContinueUnhook.Set();
+        await Task.WhenAll(retry, concurrent);
+
+        Assert.Equal(["install", "unhook"], platform.LifecycleOperations);
+        Assert.False(hookThread.IsAlive);
+    }
+
+    [Fact]
     public async Task Stop_waits_for_a_suppression_result_in_progress_and_forces_it_to_fail_open()
     {
         using var callbackReachedFinalResult = new ManualResetEventSlim();
@@ -141,6 +177,8 @@ public sealed class LowLevelKeyboardInputSourceTests
 
     private sealed class FakeKeyboardHookPlatform(nint passedThroughResult) : IKeyboardHookPlatform
     {
+        private int _pauseNextUnhook;
+
         public List<NativeMethods.HookProcedure> InstalledCallbacks { get; } = [];
 
         public List<string> LifecycleOperations { get; } = [];
@@ -148,6 +186,12 @@ public sealed class LowLevelKeyboardInputSourceTests
         public List<int> LifecycleThreadIds { get; } = [];
 
         public ManualResetEventSlim Unhooked { get; } = new();
+
+        public ManualResetEventSlim UnhookStarted { get; } = new();
+
+        public ManualResetEventSlim ContinueUnhook { get; } = new();
+
+        public void PauseNextUnhook() => Interlocked.Exchange(ref _pauseNextUnhook, 1);
 
         public IKeyboardHookRegistration Install(NativeMethods.HookProcedure callback)
         {
@@ -167,6 +211,12 @@ public sealed class LowLevelKeyboardInputSourceTests
             {
                 owner.LifecycleOperations.Add("unhook");
                 owner.LifecycleThreadIds.Add(Environment.CurrentManagedThreadId);
+                if (Interlocked.Exchange(ref owner._pauseNextUnhook, 0) == 1)
+                {
+                    owner.UnhookStarted.Set();
+                    owner.ContinueUnhook.Wait();
+                }
+
                 owner.Unhooked.Set();
             }
         }
@@ -175,11 +225,22 @@ public sealed class LowLevelKeyboardInputSourceTests
     private sealed class FakeKeyboardHookMessageLoop : IKeyboardHookMessageLoop
     {
         private readonly System.Collections.Concurrent.BlockingCollection<bool> _signals = [];
+        private int _postsToFail;
+
+        public void FailNextPost() => Interlocked.Exchange(ref _postsToFail, 1);
 
         public uint InitializeCurrentThread() => (uint)Environment.CurrentManagedThreadId;
 
         public bool WaitForCommand() => _signals.Take();
 
-        public void PostCommand(uint threadId) => _signals.Add(true);
+        public void PostCommand(uint threadId)
+        {
+            if (Interlocked.Exchange(ref _postsToFail, 0) != 0)
+            {
+                throw new InvalidOperationException("Synthetic post failure.");
+            }
+
+            _signals.Add(true);
+        }
     }
 }
