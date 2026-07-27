@@ -54,16 +54,52 @@ public sealed class KeyboardStateStoreTests
     }
 
     [Fact]
-    public void Invalidated_capture_cannot_restore_or_consume_a_suppressed_key_bit()
+    public void Replaced_capture_identity_cannot_restore_or_consume_a_suppressed_key_bit()
     {
         var suppressedKeys = new CaptureSuppressedKeys();
-        suppressedKeys.BeginCapture(7);
-        Assert.True(suppressedKeys.TryMark(InputKey.W, 7));
+        var firstCapture = suppressedKeys.BeginCapture(7);
+        Assert.True(suppressedKeys.TryMark(InputKey.W, firstCapture));
 
-        suppressedKeys.BeginCapture(8);
+        var secondCapture = suppressedKeys.BeginCapture(7);
 
-        Assert.False(suppressedKeys.TryMark(InputKey.W, 7));
-        Assert.False(suppressedKeys.TryTake(InputKey.W, 7));
-        Assert.False(suppressedKeys.TryTake(InputKey.W, 8));
+        Assert.False(suppressedKeys.TryMark(InputKey.W, firstCapture));
+        Assert.False(suppressedKeys.TryTake(InputKey.W, firstCapture));
+        Assert.False(suppressedKeys.TryTake(InputKey.W, secondCapture));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Suppression_decision_fails_open_when_capture_is_invalidated_after_its_state_change(bool take)
+    {
+        using var stateChanged = new ManualResetEventSlim();
+        using var continueDecision = new ManualResetEventSlim();
+        var pauseAfterStateChange = false;
+        var suppressedKeys = new CaptureSuppressedKeys(() =>
+        {
+            if (!Volatile.Read(ref pauseAfterStateChange))
+            {
+                return;
+            }
+
+            stateChanged.Set();
+            continueDecision.Wait();
+        });
+        var capture = suppressedKeys.BeginCapture(7);
+        if (take)
+        {
+            Assert.True(suppressedKeys.TryMark(InputKey.W, capture));
+        }
+
+        Volatile.Write(ref pauseAfterStateChange, true);
+        var decision = Task.Run(() => take
+            ? suppressedKeys.TryTake(InputKey.W, capture)
+            : suppressedKeys.TryMark(InputKey.W, capture));
+
+        Assert.True(stateChanged.Wait(TimeSpan.FromSeconds(5)));
+        suppressedKeys.EndCapture();
+        continueDecision.Set();
+
+        Assert.False(await decision);
     }
 }
