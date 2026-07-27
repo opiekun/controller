@@ -58,6 +58,7 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
         _platform = platform;
         _callbackStage = callbackStage;
         _hookThread = hookThread ?? new KeyboardHookThread();
+        _hookThread.Faulted += OnHookThreadFaulted;
     }
 
     public InputHealth Health => Volatile.Read(ref _disposed) != 0 ? InputHealth.Unavailable : _stateStore.Health;
@@ -266,6 +267,13 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
         if (_platform.IsVirtualKeyDown(VkLeftMenu) || _platform.IsVirtualKeyDown(VkRightMenu)) modifiers |= InputModifiers.Alt;
         if (_platform.IsVirtualKeyDown(VkLeftShift) || _platform.IsVirtualKeyDown(VkRightShift)) modifiers |= InputModifiers.Shift;
         _stateStore.SynchronizeModifiers(modifiers);
+    }
+
+    private void OnHookThreadFaulted(object? sender, KeyboardHookThreadFaultedEventArgs eventArgs)
+    {
+        Volatile.Write(ref _engineIsRunning, 0);
+        _suppressedKeys.EndCapture();
+        _stateStore.StopCapture();
     }
 
     private static InputKey MapKey(KbdLlHookStruct nativeKey)

@@ -4,9 +4,16 @@ namespace KeyboardAnalogThrottle.Infrastructure.Windows.Interop;
 
 internal interface IKeyboardHookThread : IAsyncDisposable
 {
+    event EventHandler<KeyboardHookThreadFaultedEventArgs>? Faulted;
+
     Task InvokeAsync(Action operation);
 
     Task<T> InvokeAsync<T>(Func<T> operation);
+}
+
+internal sealed class KeyboardHookThreadFaultedEventArgs(Exception exception) : EventArgs
+{
+    public Exception Exception { get; } = exception;
 }
 
 /// <summary>
@@ -44,6 +51,8 @@ internal sealed class KeyboardHookThread : IKeyboardHookThread
     }
 
     internal bool IsAlive => _thread.IsAlive;
+
+    public event EventHandler<KeyboardHookThreadFaultedEventArgs>? Faulted;
 
     public Task InvokeAsync(Action operation)
     {
@@ -154,7 +163,34 @@ internal sealed class KeyboardHookThread : IKeyboardHookThread
             }
 
             FailPending(failure ?? new ObjectDisposedException(nameof(KeyboardHookThread)));
+            if (failure is not null)
+            {
+                RaiseFaulted(failure);
+            }
+
             _terminated.TrySetResult();
+        }
+    }
+
+    private void RaiseFaulted(Exception exception)
+    {
+        var handlers = Faulted;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        var eventArgs = new KeyboardHookThreadFaultedEventArgs(exception);
+        foreach (EventHandler<KeyboardHookThreadFaultedEventArgs> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(this, eventArgs);
+            }
+            catch
+            {
+                // Failure listeners must not affect hook thread termination.
+            }
         }
     }
 

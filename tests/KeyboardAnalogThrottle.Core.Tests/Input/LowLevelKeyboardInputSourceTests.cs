@@ -147,6 +147,27 @@ public sealed class LowLevelKeyboardInputSourceTests
         Assert.False(source.GetSnapshot().IsPressed(Core.Input.InputKey.W));
     }
 
+    [Fact]
+    public async Task Unexpected_hook_thread_exit_marks_input_unavailable_and_clears_pressed_keys()
+    {
+        var messageLoop = new FakeKeyboardHookMessageLoop();
+        var hookThread = new KeyboardHookThread(messageLoop);
+        var platform = new FakeKeyboardHookPlatform(PassedThrough);
+        var source = new LowLevelKeyboardInputSource(
+            Configuration(),
+            platform,
+            hookThread: hookThread);
+
+        await source.StartAsync(CancellationToken.None);
+        InvokeKeyDown(platform.InstalledCallbacks[0]);
+        Assert.True(source.GetSnapshot().IsPressed(Core.Input.InputKey.W));
+
+        messageLoop.StopUnexpectedly();
+        await WaitUntilAsync(() => source.Health == InputHealth.Unavailable);
+
+        Assert.False(source.GetSnapshot().IsPressed(Core.Input.InputKey.W));
+    }
+
     private static AppConfiguration Configuration() => new()
     {
         Input = new InputConfiguration
@@ -172,6 +193,20 @@ public sealed class LowLevelKeyboardInputSourceTests
         finally
         {
             Marshal.FreeHGlobal(nativeKeyPointer);
+        }
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var timeout = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!condition())
+        {
+            if (DateTime.UtcNow >= timeout)
+            {
+                throw new TimeoutException("Condition was not satisfied before timeout.");
+            }
+
+            await Task.Delay(10);
         }
     }
 
@@ -228,6 +263,8 @@ public sealed class LowLevelKeyboardInputSourceTests
         private int _postsToFail;
 
         public void FailNextPost() => Interlocked.Exchange(ref _postsToFail, 1);
+
+        public void StopUnexpectedly() => _signals.Add(false);
 
         public uint InitializeCurrentThread() => (uint)Environment.CurrentManagedThreadId;
 
