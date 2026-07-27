@@ -8,10 +8,14 @@ public sealed class InputSnapshot
     private readonly HashSet<InputKey> _pressedKeys;
     private readonly HashSet<InputKey> _pressedThisFrame;
     private readonly Dictionary<InputKey, long> _transitionSequences;
+    private readonly Dictionary<InputKey, InputModifiers> _transitionModifiers;
 
     public static InputSnapshot Empty { get; } = new([], []);
 
-    public InputSnapshot(IEnumerable<InputKey> pressedKeys, IEnumerable<KeyTransition> transitions)
+    public InputSnapshot(
+        IEnumerable<InputKey> pressedKeys,
+        IEnumerable<KeyTransition> transitions,
+        IReadOnlyDictionary<InputKey, long>? transitionSequences = null)
     {
         ArgumentNullException.ThrowIfNull(pressedKeys);
         ArgumentNullException.ThrowIfNull(transitions);
@@ -19,6 +23,15 @@ public sealed class InputSnapshot
         _pressedKeys = new HashSet<InputKey>(pressedKeys);
         _pressedThisFrame = new HashSet<InputKey>();
         _transitionSequences = new Dictionary<InputKey, long>();
+        _transitionModifiers = new Dictionary<InputKey, InputModifiers>();
+
+        if (transitionSequences is not null)
+        {
+            foreach (var (key, sequence) in transitionSequences)
+            {
+                _transitionSequences[key] = sequence;
+            }
+        }
 
         foreach (var transition in transitions)
         {
@@ -26,6 +39,7 @@ public sealed class InputSnapshot
             if (transition.IsDown)
             {
                 _pressedThisFrame.Add(transition.Key);
+                _transitionModifiers[transition.Key] = transition.Modifiers;
             }
         }
     }
@@ -60,4 +74,10 @@ public sealed class InputSnapshot
 
     public long TransitionSequence(InputKey key) =>
         _transitionSequences.TryGetValue(key, out var sequence) ? sequence : 0;
+
+    /// <summary>
+    /// Gets the normalized modifier flags captured with a key-down transition in this frame.
+    /// </summary>
+    public InputModifiers TransitionModifiers(InputKey key) =>
+        _transitionModifiers.TryGetValue(key, out var modifiers) ? modifiers : InputModifiers.None;
 }
