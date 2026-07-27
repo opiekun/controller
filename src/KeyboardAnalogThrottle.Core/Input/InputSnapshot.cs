@@ -9,6 +9,7 @@ public sealed class InputSnapshot
     private readonly HashSet<InputKey> _pressedThisFrame;
     private readonly Dictionary<InputKey, long> _transitionSequences;
     private readonly Dictionary<InputKey, InputModifiers> _transitionModifiers;
+    private readonly KeyTransition[] _transitions;
 
     public static InputSnapshot Empty { get; } = new([], []);
 
@@ -24,6 +25,7 @@ public sealed class InputSnapshot
         _pressedThisFrame = new HashSet<InputKey>();
         _transitionSequences = new Dictionary<InputKey, long>();
         _transitionModifiers = new Dictionary<InputKey, InputModifiers>();
+        var capturedTransitions = new List<KeyTransition>();
 
         if (transitionSequences is not null)
         {
@@ -35,6 +37,7 @@ public sealed class InputSnapshot
 
         foreach (var transition in transitions)
         {
+            capturedTransitions.Add(transition);
             _transitionSequences[transition.Key] = transition.Sequence;
             if (transition.IsDown)
             {
@@ -42,6 +45,8 @@ public sealed class InputSnapshot
                 _transitionModifiers[transition.Key] = transition.Modifiers;
             }
         }
+
+        _transitions = capturedTransitions.ToArray();
     }
 
     public InputModifiers Modifiers
@@ -55,6 +60,11 @@ public sealed class InputSnapshot
             return modifiers;
         }
     }
+
+    /// <summary>
+    /// Gets the ordered distinct physical key state changes captured for this frame.
+    /// </summary>
+    public IReadOnlyList<KeyTransition> Transitions => _transitions;
 
     public static InputSnapshot FromPressed(params InputKey[] pressedKeys)
     {

@@ -30,24 +30,29 @@ public sealed class RatchetInputStrategy : IInputStrategy
 
         var maximum = Normalize(configuration.MaximumLevel);
         var value = Math.Clamp(Normalize(currentValue), 0d, maximum);
-        var events = new (InputBinding Binding, Action Apply, long Sequence)[]
-        {
-            (_increaseBinding, () => value = Math.Min(maximum, value + _step), input.TransitionSequence(_increaseBinding.Primary)),
-            (_decreaseBinding, () => value = Math.Max(0d, value - _step), input.TransitionSequence(_decreaseBinding.Primary)),
-            (_resetBinding, () => value = 0d, input.TransitionSequence(_resetBinding.Primary))
-        };
 
-        foreach (var transition in events.Where(candidate => IsDownTransition(input, candidate.Binding)).OrderBy(candidate => candidate.Sequence))
+        var transitions = input.Transitions;
+        for (var index = 0; index < transitions.Count; index++)
         {
-            transition.Apply();
+            var transition = transitions[index];
+            if (_increaseBinding.Matches(transition))
+            {
+                value = Math.Min(maximum, value + _step);
+            }
+
+            if (_decreaseBinding.Matches(transition))
+            {
+                value = Math.Max(0d, value - _step);
+            }
+
+            if (_resetBinding.Matches(transition))
+            {
+                value = 0d;
+            }
         }
 
         return value;
     }
-
-    private static bool IsDownTransition(InputSnapshot input, InputBinding binding) =>
-        input.WasPressedThisFrame(binding.Primary) &&
-        (input.TransitionModifiers(binding.Primary) & binding.Modifiers) == binding.Modifiers;
 
     private static double Normalize(double value) => double.IsFinite(value) ? Math.Clamp(value, 0d, 1d) : 0d;
 }

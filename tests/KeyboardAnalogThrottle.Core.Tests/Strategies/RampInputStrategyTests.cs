@@ -44,6 +44,45 @@ public sealed class RampInputStrategyTests
     }
 
     [Fact]
+    public void Does_not_apply_the_initial_minimum_when_the_modifier_was_pressed_after_the_primary_key()
+    {
+        var strategy = new RampInputStrategy();
+        var configuration = ChannelConfiguration.DefaultThrottle with { PrimaryBinding = "Ctrl+W", InitialLevel = .25 };
+        var input = new InputSnapshot([InputKey.W, InputKey.LeftControl], [
+            new KeyTransition(InputKey.W, true, 1),
+            new KeyTransition(InputKey.LeftControl, true, 2)]);
+
+        Assert.Equal(0, strategy.Update(input, 0, TimeSpan.Zero, configuration));
+    }
+
+    [Fact]
+    public void Applies_the_initial_minimum_when_a_qualified_primary_key_down_preceded_modifier_release()
+    {
+        var strategy = new RampInputStrategy();
+        var configuration = ChannelConfiguration.DefaultThrottle with { PrimaryBinding = "Ctrl+W", InitialLevel = .25 };
+        var input = new InputSnapshot([InputKey.W], [
+            new KeyTransition(InputKey.W, true, 1, InputModifiers.Control),
+            new KeyTransition(InputKey.LeftControl, false, 2)]);
+
+        Assert.Equal(.25, strategy.Update(input, 0, TimeSpan.Zero, configuration));
+    }
+
+    [Fact]
+    public void Does_not_allocate_while_updating_with_an_unchanged_configuration()
+    {
+        var strategy = new RampInputStrategy();
+        var configuration = ChannelConfiguration.DefaultThrottle;
+        var input = new InputSnapshot([InputKey.W], []);
+
+        strategy.Update(input, 0, TimeSpan.Zero, configuration);
+
+        var allocatedBeforeUpdate = GC.GetAllocatedBytesForCurrentThread();
+        strategy.Update(input, 0, TimeSpan.Zero, configuration);
+
+        Assert.Equal(allocatedBeforeUpdate, GC.GetAllocatedBytesForCurrentThread());
+    }
+
+    [Fact]
     public void Falls_to_zero_at_the_configured_rate_after_the_primary_is_released()
     {
         var strategy = new RampInputStrategy();

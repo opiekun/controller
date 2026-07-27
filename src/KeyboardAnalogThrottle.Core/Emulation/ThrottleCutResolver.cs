@@ -19,10 +19,14 @@ public sealed class ThrottleCutResolver
             return cutBinding.Matches(input) ? 0d : throttle;
         }
 
-        if (input.WasPressedThisFrame(cutBinding.Primary) &&
-            (input.TransitionModifiers(cutBinding.Primary) & cutBinding.Modifiers) == cutBinding.Modifiers)
+        var transitions = input.Transitions;
+        for (var index = 0; index < transitions.Count; index++)
         {
-            _toggleCutActive = !_toggleCutActive;
+            var transition = transitions[index];
+            if (cutBinding.Matches(transition))
+            {
+                _toggleCutActive = !_toggleCutActive;
+            }
         }
 
         return _toggleCutActive ? 0d : throttle;

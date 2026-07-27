@@ -44,4 +44,19 @@ public sealed class RatchetInputStrategyTests
 
         Assert.Equal(.25, strategy.Update(tap, 0, TimeSpan.Zero, ChannelConfiguration.DefaultThrottle), 6);
     }
+
+    [Fact]
+    public void Applies_every_qualifying_down_transition_in_the_order_it_was_observed()
+    {
+        var strategy = new RatchetInputStrategy(new RatchetConfiguration { Step = .25 });
+        var transitions = new[]
+        {
+            new KeyTransition(InputKey.PageUp, true, 1),
+            new KeyTransition(InputKey.PageDown, true, 2),
+            new KeyTransition(InputKey.PageUp, true, 3)
+        };
+        var input = new InputSnapshot([InputKey.PageUp, InputKey.PageDown], transitions);
+
+        Assert.Equal(.5, strategy.Update(input, .25, TimeSpan.Zero, ChannelConfiguration.DefaultThrottle), 6);
+    }
 }

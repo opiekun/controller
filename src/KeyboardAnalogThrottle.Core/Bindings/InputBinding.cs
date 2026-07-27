@@ -18,6 +18,15 @@ public readonly record struct InputBinding(InputKey Primary, InputModifiers Modi
         return Primary != InputKey.None && snapshot.IsPressed(Primary) && (snapshot.Modifiers & Modifiers) == Modifiers;
     }
 
+    /// <summary>
+    /// Determines whether a physical key-down transition satisfied this binding at the time it occurred.
+    /// </summary>
+    public bool Matches(KeyTransition transition) =>
+        transition.IsDown &&
+        Primary != InputKey.None &&
+        Primary == transition.Key &&
+        (transition.Modifiers & Modifiers) == Modifiers;
+
     public override string ToString() => string.Concat(ModifierPrefix(Modifiers), FormatPrimary(Primary));
 
     internal int CompareCanonicalTo(InputBinding other)

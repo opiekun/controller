@@ -48,4 +48,17 @@ public sealed class ThrottleCutResolverTests
 
         Assert.Equal(0, resolver.Resolve(tap, binding, .8, toggle: true));
     }
+
+    [Fact]
+    public void Toggle_cut_toggles_for_each_qualifying_down_transition_between_samples()
+    {
+        var resolver = new ThrottleCutResolver();
+        var binding = BindingParser.Parse("Space");
+        var input = new InputSnapshot([], [
+            new KeyTransition(InputKey.Space, true, 1),
+            new KeyTransition(InputKey.Space, false, 2),
+            new KeyTransition(InputKey.Space, true, 3)]);
+
+        Assert.Equal(.8, resolver.Resolve(input, binding, .8, toggle: true));
+    }
 }
