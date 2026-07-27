@@ -35,6 +35,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private double _rawBrakePercentage;
     private double _throttlePercentage;
     private double _brakePercentage;
+    private bool _isKeyboardHookConnected;
     private bool _isControllerConnected;
     private bool _isSuppressionEnabled;
     private string _activeBindings = string.Empty;
@@ -87,6 +88,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public double RawBrakePercentage { get => _rawBrakePercentage; private set => SetProperty(ref _rawBrakePercentage, value); }
     public double ThrottlePercentage { get => _throttlePercentage; private set => SetProperty(ref _throttlePercentage, value); }
     public double BrakePercentage { get => _brakePercentage; private set => SetProperty(ref _brakePercentage, value); }
+    public bool IsKeyboardHookConnected { get => _isKeyboardHookConnected; private set => SetProperty(ref _isKeyboardHookConnected, value); }
     public bool IsControllerConnected { get => _isControllerConnected; private set => SetProperty(ref _isControllerConnected, value); }
     public bool IsSuppressionEnabled { get => _isSuppressionEnabled; private set => SetProperty(ref _isSuppressionEnabled, value); }
     public string ActiveBindings { get => _activeBindings; private set => SetProperty(ref _activeBindings, value); }
@@ -268,7 +270,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         RawBrakePercentage = ToPercentage(state.RawBrake);
         ThrottlePercentage = ToPercentage(state.Throttle);
         BrakePercentage = ToPercentage(state.Brake);
-        IsControllerConnected = state.IsRunning;
+        IsKeyboardHookConnected = state.IsKeyboardHookConnected;
+        IsControllerConnected = state.IsControllerConnected;
         InputHealth = state.InputHealth.ToString();
         if (state.Fault is not null)
         {

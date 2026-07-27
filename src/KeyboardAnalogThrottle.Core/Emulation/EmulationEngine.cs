@@ -110,7 +110,7 @@ public sealed class EmulationEngine : IEmulationEngine
                 _unhealthySince = null;
                 _throttleCut.Reset();
                 _loopCancellation = new CancellationTokenSource();
-                Publish(new EmulationState(true, 0d, 0d, 0d, 0d, 0, 0, ReadInputHealth(), null), force: true);
+                Publish(new EmulationState(true, 0d, 0d, 0d, 0d, 0, 0, ReadInputHealth(), null, true, true), force: true);
                 _loopTask = Task.Run(() => RunLoopAsync(_loopCancellation.Token));
             }
             catch (Exception exception)
@@ -255,7 +255,7 @@ public sealed class EmulationEngine : IEmulationEngine
 
         ThrowIfControllerUnavailable();
         SubmitChangedReport(right, left);
-        Publish(new EmulationState(true, _rawThrottle, _rawBrake, throttle, brake, right, left, health, null), force: false);
+        Publish(new EmulationState(true, _rawThrottle, _rawBrake, throttle, brake, right, left, health, null, true, true), force: false);
     }
 
     private async Task StopAfterFaultAsync(Exception exception)
@@ -420,7 +420,7 @@ public sealed class EmulationEngine : IEmulationEngine
     }
 
     private EmulationState StoppedWithFault(EmulationFault? fault) => new(
-        false, 0d, 0d, 0d, 0d, 0, 0, ReadInputHealthForState(), fault);
+        false, 0d, 0d, 0d, 0d, 0, 0, ReadInputHealthForState(), fault, false, false);
 
     private InputHealth ReadInputHealth()
     {

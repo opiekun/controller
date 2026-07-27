@@ -29,8 +29,12 @@
                         <TextBlock FontSize="18" FontWeight="SemiBold" Text="{Binding Status}" />
                         <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding StatusMessage}" />
                     </StackPanel>
-                    <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold"
-                               Text="{Binding IsControllerConnected, StringFormat=Controller connected: {0}}" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock FontWeight="SemiBold"
+                                   Text="{Binding IsKeyboardHookConnected, StringFormat=Keyboard hook connected: {0}}" />
+                        <TextBlock Margin="0,4,0,0" FontWeight="SemiBold"
+                                   Text="{Binding IsControllerConnected, StringFormat=Controller connected: {0}}" />
+                    </StackPanel>
                 </Grid>
             </Border>
 

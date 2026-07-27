@@ -77,6 +77,25 @@ public sealed class EmulationSessionTests
         }
     }
 
+    [Fact]
+    public async Task Controller_test_reports_only_the_diagnostic_controller_as_connected()
+    {
+        var controllerTest = new BlockingControllerTestService();
+        await using var session = new EmulationSession(() => new RecordingEngine(), controllerTest);
+
+        var test = session.RunControllerTestAsync(CancellationToken.None);
+        await controllerTest.Started.Task;
+
+        Assert.False(session.State.IsKeyboardHookConnected);
+        Assert.True(session.State.IsControllerConnected);
+
+        controllerTest.AllowFinish();
+        await test;
+
+        Assert.False(session.State.IsKeyboardHookConnected);
+        Assert.False(session.State.IsControllerConnected);
+    }
+
     private static async Task IgnoreFailureAsync(Task task)
     {
         try
@@ -143,15 +162,12 @@ public sealed class EmulationSessionTests
 
         public int RunCalls { get; private set; }
 
-        public event EventHandler<ControllerTestProgress>? ProgressChanged
-        {
-            add { }
-            remove { }
-        }
+        public event EventHandler<ControllerTestProgress>? ProgressChanged;
 
         public async Task RunAsync(CancellationToken cancellationToken)
         {
             RunCalls++;
+            ProgressChanged?.Invoke(this, new ControllerTestProgress(1, 12, false, 0));
             Started.TrySetResult();
             try
             {

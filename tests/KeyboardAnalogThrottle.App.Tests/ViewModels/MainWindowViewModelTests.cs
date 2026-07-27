@@ -44,6 +44,16 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public void Stopped_state_projects_hook_and_controller_as_disconnected()
+    {
+        var engine = new BlockingEngine();
+        using var viewModel = CreateViewModel(engine);
+
+        Assert.False(viewModel.IsKeyboardHookConnected);
+        Assert.False(viewModel.IsControllerConnected);
+    }
+
+    [Fact]
     public async Task Engine_state_projects_status_and_percentages()
     {
         var engine = new BlockingEngine();
@@ -58,7 +68,9 @@ public sealed class MainWindowViewModelTests
             128,
             191,
             InputHealth.Healthy,
-            null));
+            null,
+            true,
+            true));
 
         await Task.Delay(TimeSpan.FromMilliseconds(100));
 
@@ -67,7 +79,28 @@ public sealed class MainWindowViewModelTests
         Assert.Equal(25d, viewModel.RawBrakePercentage);
         Assert.Equal(50d, viewModel.ThrottlePercentage);
         Assert.Equal(75d, viewModel.BrakePercentage);
+        Assert.True(viewModel.IsKeyboardHookConnected);
         Assert.True(viewModel.IsControllerConnected);
+    }
+
+    [Fact]
+    public async Task Fault_state_projects_hook_and_controller_as_disconnected()
+    {
+        var engine = new BlockingEngine();
+        using var viewModel = CreateViewModel(engine);
+        engine.Publish(EmulationState.Stopped with
+        {
+            IsRunning = false,
+            IsKeyboardHookConnected = false,
+            IsControllerConnected = false,
+            Fault = new EmulationFault(EmulationFaultKind.Controller, "controller lost")
+        });
+
+        await Task.Delay(TimeSpan.FromMilliseconds(100));
+
+        Assert.Equal("Faulted", viewModel.Status);
+        Assert.False(viewModel.IsKeyboardHookConnected);
+        Assert.False(viewModel.IsControllerConnected);
     }
 
     [Fact]

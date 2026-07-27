@@ -127,6 +127,7 @@ public sealed class EmulationSession : IEmulationSession
     private async Task RunControllerTestCoreAsync(CancellationTokenSource testCancellation)
     {
         var enteredOperationGate = false;
+        var controllerTestStarted = false;
         try
         {
             await _operationGate.WaitAsync(testCancellation.Token).ConfigureAwait(false);
@@ -138,10 +139,21 @@ public sealed class EmulationSession : IEmulationSession
             }
 
             testCancellation.Token.ThrowIfCancellationRequested();
+            controllerTestStarted = true;
             await _controllerTest.RunAsync(testCancellation.Token).ConfigureAwait(false);
         }
         finally
         {
+            if (controllerTestStarted)
+            {
+                PublishState(State with
+                {
+                    IsRunning = false,
+                    IsKeyboardHookConnected = false,
+                    IsControllerConnected = false
+                });
+            }
+
             if (enteredOperationGate)
             {
                 _operationGate.Release();
@@ -235,6 +247,13 @@ public sealed class EmulationSession : IEmulationSession
 
     private void OnControllerTestProgressChanged(object? sender, ControllerTestProgress progress)
     {
+        PublishState(State with
+        {
+            IsRunning = false,
+            IsKeyboardHookConnected = false,
+            IsControllerConnected = true
+        });
+
         var handlers = ControllerTestProgressChanged;
         if (handlers is null)
         {

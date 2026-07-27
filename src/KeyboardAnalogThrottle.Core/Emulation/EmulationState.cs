@@ -12,8 +12,10 @@ public sealed record EmulationState(
     byte RightTrigger,
     byte LeftTrigger,
     InputHealth InputHealth,
-    EmulationFault? Fault)
+    EmulationFault? Fault,
+    bool IsKeyboardHookConnected = false,
+    bool IsControllerConnected = false)
 {
     public static EmulationState Stopped { get; } = new(
-        false, 0d, 0d, 0d, 0d, 0, 0, InputHealth.Healthy, null);
+        false, 0d, 0d, 0d, 0d, 0, 0, InputHealth.Healthy, null, false, false);
 }

@@ -15,9 +15,13 @@ public sealed class EmulationEngineTests
         await using var engine = CreateEngine(controller, FakeKeyboardInputSource.Pressed(InputKey.W));
 
         await engine.StartAsync(CancellationToken.None);
+        Assert.True(engine.State.IsKeyboardHookConnected);
+        Assert.True(engine.State.IsControllerConnected);
         await engine.StopAsync(CancellationToken.None);
         await engine.StopAsync(CancellationToken.None);
 
+        Assert.False(engine.State.IsKeyboardHookConnected);
+        Assert.False(engine.State.IsControllerConnected);
         Assert.Equal((byte)0, controller.RightTrigger);
         Assert.Equal((byte)0, controller.LeftTrigger);
         Assert.False(controller.IsConnected);
@@ -35,6 +39,8 @@ public sealed class EmulationEngineTests
         await WaitUntilAsync(() => !engine.State.IsRunning);
 
         Assert.False(engine.State.IsRunning);
+        Assert.False(engine.State.IsKeyboardHookConnected);
+        Assert.False(engine.State.IsControllerConnected);
         Assert.Equal(EmulationFaultKind.Controller, engine.State.Fault?.Kind);
         Assert.Equal(1, controller.DisconnectCount);
         Assert.True(controller.SetLeftCount > 0);
