@@ -36,6 +36,9 @@ internal sealed class CaptureSuppressedKeys
 
     public void EndCapture() => Interlocked.Exchange(ref _currentCapture, new Session(0));
 
+    public void EndCapture(Session capture) =>
+        Interlocked.CompareExchange(ref _currentCapture, new Session(0), capture);
+
     public bool IsCurrent(Session capture) =>
         capture.Generation != 0 && ReferenceEquals(Volatile.Read(ref _currentCapture), capture);
 

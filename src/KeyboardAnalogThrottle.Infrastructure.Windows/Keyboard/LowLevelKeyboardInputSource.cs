@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Runtime.InteropServices;
 using KeyboardAnalogThrottle.Core.Abstractions;
 using KeyboardAnalogThrottle.Core.Configuration;
@@ -14,7 +13,6 @@ namespace KeyboardAnalogThrottle.Infrastructure.Windows.Keyboard;
 /// </summary>
 public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
 {
-    private const int WhKeyboardLl = 13;
     private const uint WmKeyDown = 0x0100;
     private const uint WmKeyUp = 0x0101;
     private const uint WmSysKeyDown = 0x0104;
@@ -27,21 +25,33 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
     private const int VkLeftMenu = 0xA4;
     private const int VkRightMenu = 0xA5;
 
-    private readonly object _lifecycleGate = new();
+    private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private readonly KeyboardStateStore _stateStore = new();
     private readonly SuppressionPolicy _suppressionPolicy;
-    private readonly NativeMethods.HookProcedure _hookProcedure;
+    private readonly IKeyboardHookPlatform _platform;
+    private readonly Action<KeyboardHookCallbackStage>? _callbackStage;
     private readonly CaptureSuppressedKeys _suppressedKeys = new();
-    private SafeHookHandle? _hook;
-    private int _acceptingInput;
+    private readonly List<KeyboardHookInstallation> _retiredInstallations = [];
+    private IKeyboardHookRegistration? _hook;
+    private KeyboardHookInstallation? _installation;
     private int _engineIsRunning;
     private int _disposed;
 
     public LowLevelKeyboardInputSource(AppConfiguration configuration)
+        : this(configuration, new Win32KeyboardHookPlatform())
+    {
+    }
+
+    internal LowLevelKeyboardInputSource(
+        AppConfiguration configuration,
+        IKeyboardHookPlatform platform,
+        Action<KeyboardHookCallbackStage>? callbackStage = null)
     {
         ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(platform);
         _suppressionPolicy = new SuppressionPolicy(configuration);
-        _hookProcedure = HookCallback;
+        _platform = platform;
+        _callbackStage = callbackStage;
     }
 
     public InputHealth Health => Volatile.Read(ref _disposed) != 0 ? InputHealth.Unavailable : _stateStore.Health;
@@ -53,56 +63,78 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
     /// </summary>
     public void SetEngineRunning(bool isRunning) => Volatile.Write(ref _engineIsRunning, isRunning ? 1 : 0);
 
-    public Task StartAsync(CancellationToken cancellationToken)
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        lock (_lifecycleGate)
+        await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
             ThrowIfDisposed();
-            if (_hook is not null && !_hook.IsInvalid && !_hook.IsClosed)
+            if (_installation is not null)
             {
-                return Task.CompletedTask;
+                return;
             }
 
             var captureGeneration = _stateStore.BeginCapture();
-            var nativeHandle = NativeMethods.SetWindowsHookEx(
-                WhKeyboardLl,
-                _hookProcedure,
-                NativeMethods.GetModuleHandle(null),
-                threadId: 0);
-
-            if (nativeHandle == nint.Zero)
+            var capture = _suppressedKeys.BeginCapture(captureGeneration);
+            var installation = new KeyboardHookInstallation(this, capture, _callbackStage);
+            IKeyboardHookRegistration? hook = null;
+            try
             {
-                _stateStore.SetHealth(InputHealth.Unavailable);
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to install the low-level keyboard hook.");
+                hook = _platform.Install(installation.Callback);
+                _hook = hook;
+                _installation = installation;
+                SynchronizeCurrentModifiers();
+                _stateStore.SetHealth(InputHealth.Healthy);
+                installation.Activate();
             }
-
-            _hook = new SafeHookHandle(nativeHandle);
-            SynchronizeCurrentModifiers();
-            _stateStore.SetHealth(InputHealth.Healthy);
-            _suppressedKeys.BeginCapture(captureGeneration);
-            Volatile.Write(ref _acceptingInput, 1);
+            catch
+            {
+                installation.CloseAdmission();
+                hook?.Dispose();
+                _hook = null;
+                _installation = null;
+                _retiredInstallations.Add(installation);
+                _suppressedKeys.EndCapture(capture);
+                _stateStore.StopCapture();
+                throw;
+            }
         }
-
-        return Task.CompletedTask;
+        finally
+        {
+            _lifecycleGate.Release();
+        }
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
-        SafeHookHandle? hook;
-        lock (_lifecycleGate)
+        await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            Volatile.Write(ref _acceptingInput, 0);
             SetEngineRunning(isRunning: false);
-            hook = _hook;
+            var installation = _installation;
+            var hook = _hook;
+            _installation = null;
             _hook = null;
-            _suppressedKeys.EndCapture();
+            installation?.CloseAdmission();
+            hook?.Dispose();
+
+            if (installation is not null)
+            {
+                _retiredInstallations.Add(installation);
+                await installation.WaitForQuiescenceAsync().ConfigureAwait(false);
+                _suppressedKeys.EndCapture(installation.Capture);
+            }
+            else
+            {
+                _suppressedKeys.EndCapture();
+            }
+
             _stateStore.StopCapture();
         }
-
-        hook?.Dispose();
-        return Task.CompletedTask;
+        finally
+        {
+            _lifecycleGate.Release();
+        }
     }
 
     public InputSnapshot GetSnapshot() => _stateStore.GetSnapshot();
@@ -115,11 +147,15 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
         }
     }
 
-    private nint HookCallback(int code, nuint wParam, nint lParam)
+    private nint HookCallback(
+        KeyboardHookInstallation installation,
+        int code,
+        nuint wParam,
+        nint lParam)
     {
-        if (code < 0 || Volatile.Read(ref _acceptingInput) == 0)
+        if (code < 0)
         {
-            return NativeMethods.CallNextHookEx(nint.Zero, code, wParam, lParam);
+            return _platform.CallNext(code, wParam, lParam);
         }
 
         try
@@ -129,20 +165,20 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
             var isUp = message is WmKeyUp or WmSysKeyUp;
             if (!isDown && !isUp)
             {
-                return NativeMethods.CallNextHookEx(nint.Zero, code, wParam, lParam);
+                return _platform.CallNext(code, wParam, lParam);
             }
 
             var nativeKey = Marshal.PtrToStructure<KbdLlHookStruct>(lParam);
             var key = MapKey(nativeKey);
             if (key == InputKey.None)
             {
-                return NativeMethods.CallNextHookEx(nint.Zero, code, wParam, lParam);
+                return _platform.CallNext(code, wParam, lParam);
             }
 
-            var capture = _suppressedKeys.CurrentCapture;
+            var capture = installation.Capture;
             if (!_suppressedKeys.IsCurrent(capture))
             {
-                return NativeMethods.CallNextHookEx(nint.Zero, code, wParam, lParam);
+                return _platform.CallNext(code, wParam, lParam);
             }
 
             var captureGeneration = capture.Generation;
@@ -151,7 +187,7 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
                 : _stateStore.TryApplyUp(key, captureGeneration);
             if (!_stateStore.IsCurrentCapture(captureGeneration))
             {
-                return NativeMethods.CallNextHookEx(nint.Zero, code, wParam, lParam);
+                return _platform.CallNext(code, wParam, lParam);
             }
 
             var suppress = isDown ? ShouldSuppressDown(key, capture) : WasSuppressedOnDown(key, capture);
@@ -160,14 +196,17 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
                 DispatchNotification(notification);
             }
 
-            return suppress && _suppressedKeys.IsCurrent(capture)
+            _callbackStage?.Invoke(KeyboardHookCallbackStage.BeforeFinalResult);
+            return suppress &&
+                installation.IsAccepting &&
+                _suppressedKeys.IsCurrent(capture)
                 ? 1
-                : NativeMethods.CallNextHookEx(nint.Zero, code, wParam, lParam);
+                : _platform.CallNext(code, wParam, lParam);
         }
         catch
         {
             // A hook must fail open; exceptions may not escape into the Windows callback chain.
-            return NativeMethods.CallNextHookEx(nint.Zero, code, wParam, lParam);
+            return _platform.CallNext(code, wParam, lParam);
         }
     }
 
@@ -196,13 +235,11 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
     private void SynchronizeCurrentModifiers()
     {
         var modifiers = InputModifiers.None;
-        if (IsVirtualKeyDown(VkLeftControl) || IsVirtualKeyDown(VkRightControl)) modifiers |= InputModifiers.Control;
-        if (IsVirtualKeyDown(VkLeftMenu) || IsVirtualKeyDown(VkRightMenu)) modifiers |= InputModifiers.Alt;
-        if (IsVirtualKeyDown(VkLeftShift) || IsVirtualKeyDown(VkRightShift)) modifiers |= InputModifiers.Shift;
+        if (_platform.IsVirtualKeyDown(VkLeftControl) || _platform.IsVirtualKeyDown(VkRightControl)) modifiers |= InputModifiers.Control;
+        if (_platform.IsVirtualKeyDown(VkLeftMenu) || _platform.IsVirtualKeyDown(VkRightMenu)) modifiers |= InputModifiers.Alt;
+        if (_platform.IsVirtualKeyDown(VkLeftShift) || _platform.IsVirtualKeyDown(VkRightShift)) modifiers |= InputModifiers.Shift;
         _stateStore.SynchronizeModifiers(modifiers);
     }
-
-    private static bool IsVirtualKeyDown(int virtualKey) => (NativeMethods.GetKeyState(virtualKey) & 0x8000) != 0;
 
     private static InputKey MapKey(KbdLlHookStruct nativeKey)
     {
@@ -277,4 +314,86 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
             throw new ObjectDisposedException(nameof(LowLevelKeyboardInputSource));
         }
     }
+
+    private sealed class KeyboardHookInstallation
+    {
+        private readonly LowLevelKeyboardInputSource _source;
+        private readonly Action<KeyboardHookCallbackStage>? _callbackStage;
+        private readonly TaskCompletionSource _quiesced =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _accepting;
+        private int _inFlight;
+
+        public KeyboardHookInstallation(
+            LowLevelKeyboardInputSource source,
+            CaptureSuppressedKeys.Session capture,
+            Action<KeyboardHookCallbackStage>? callbackStage)
+        {
+            _source = source;
+            Capture = capture;
+            _callbackStage = callbackStage;
+            Callback = Invoke;
+        }
+
+        public CaptureSuppressedKeys.Session Capture { get; }
+
+        public NativeMethods.HookProcedure Callback { get; }
+
+        public bool IsAccepting => Volatile.Read(ref _accepting) != 0;
+
+        public void Activate() => Volatile.Write(ref _accepting, 1);
+
+        public void CloseAdmission()
+        {
+            Volatile.Write(ref _accepting, 0);
+            if (Volatile.Read(ref _inFlight) == 0)
+            {
+                _quiesced.TrySetResult();
+            }
+        }
+
+        public Task WaitForQuiescenceAsync() => _quiesced.Task;
+
+        private nint Invoke(int code, nuint wParam, nint lParam)
+        {
+            try
+            {
+                _callbackStage?.Invoke(KeyboardHookCallbackStage.BeforeAdmission);
+            }
+            catch
+            {
+                return _source._platform.CallNext(code, wParam, lParam);
+            }
+
+            Interlocked.Increment(ref _inFlight);
+            if (!IsAccepting)
+            {
+                Exit();
+                return _source._platform.CallNext(code, wParam, lParam);
+            }
+
+            try
+            {
+                return _source.HookCallback(this, code, wParam, lParam);
+            }
+            finally
+            {
+                Exit();
+            }
+        }
+
+        private void Exit()
+        {
+            if (Interlocked.Decrement(ref _inFlight) == 0 && !IsAccepting)
+            {
+                _quiesced.TrySetResult();
+            }
+        }
+    }
+}
+
+internal enum KeyboardHookCallbackStage
+{
+    BeforeAdmission,
+    BeforeFinalResult
 }

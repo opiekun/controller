@@ -2,7 +2,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace KeyboardAnalogThrottle.Infrastructure.Windows.Interop;
 
-internal sealed class SafeHookHandle : SafeHandleZeroOrMinusOneIsInvalid
+internal sealed class SafeHookHandle : SafeHandleZeroOrMinusOneIsInvalid, IKeyboardHookRegistration
 {
     internal SafeHookHandle(nint handle)
         : base(ownsHandle: true)
