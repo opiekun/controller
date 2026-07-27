@@ -3,7 +3,7 @@ using KeyboardAnalogThrottle.Core.Input;
 namespace KeyboardAnalogThrottle.Core.Emulation;
 
 /// <summary>
-/// Resolves throttle and brake output when simultaneous base-key input is disabled.
+/// Resolves active throttle and brake output when simultaneous input is disabled.
 /// </summary>
 public static class ConflictResolver
 {
@@ -18,7 +18,7 @@ public static class ConflictResolver
     {
         ArgumentNullException.ThrowIfNull(input);
 
-        if (simultaneousInputEnabled || !input.IsPressed(throttleKey) || !input.IsPressed(brakeKey))
+        if (simultaneousInputEnabled || !(throttle > 0d) || !(brake > 0d))
         {
             return (throttle, brake);
         }

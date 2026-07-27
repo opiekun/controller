@@ -53,14 +53,54 @@ public sealed class ConflictResolverTests
     }
 
     [Fact]
-    public void Leaves_values_unchanged_when_simultaneous_input_is_enabled_or_not_physically_simultaneous()
+    public void Applies_brake_wins_to_active_ramp_outputs_after_both_base_keys_are_released()
     {
-        var onlyThrottlePressed = new InputSnapshot([InputKey.W], [new KeyTransition(InputKey.W, true, 1)]);
+        var released = new InputSnapshot(
+            [],
+            [],
+            new Dictionary<InputKey, long>
+            {
+                [InputKey.W] = 1,
+                [InputKey.S] = 2
+            });
 
-        var notSimultaneous = ConflictResolver.Resolve(onlyThrottlePressed, .8, .6, InputKey.W, InputKey.S, ConflictMode.BrakeWins);
-        var enabled = ConflictResolver.Resolve(onlyThrottlePressed, .8, .6, InputKey.W, InputKey.S, ConflictMode.BrakeWins, simultaneousInputEnabled: true);
+        var result = ConflictResolver.Resolve(released, .8, .6, InputKey.W, InputKey.S, ConflictMode.BrakeWins);
 
-        Assert.Equal((.8, .6), notSimultaneous);
-        Assert.Equal((.8, .6), enabled);
+        Assert.Equal((0d, .6d), result);
+    }
+
+    [Fact]
+    public void Applies_brake_wins_to_persistent_ratchet_outputs_without_pressed_base_keys()
+    {
+        var result = ConflictResolver.Resolve(InputSnapshot.Empty, .8, .6, InputKey.W, InputKey.S, ConflictMode.BrakeWins);
+
+        Assert.Equal((0d, .6d), result);
+    }
+
+    [Fact]
+    public void Last_pressed_wins_from_prior_physical_base_key_sequences_after_release()
+    {
+        var released = new InputSnapshot(
+            [],
+            [],
+            new Dictionary<InputKey, long>
+            {
+                [InputKey.W] = 9,
+                [InputKey.S] = 4
+            });
+
+        var result = ConflictResolver.Resolve(released, .8, .6, InputKey.W, InputKey.S, ConflictMode.LastPressedWins);
+
+        Assert.Equal((.8d, 0d), result);
+    }
+
+    [Fact]
+    public void Leaves_values_unchanged_when_simultaneous_input_is_enabled()
+    {
+        var input = new InputSnapshot([InputKey.W, InputKey.S], []);
+
+        var result = ConflictResolver.Resolve(input, .8, .6, InputKey.W, InputKey.S, ConflictMode.BrakeWins, simultaneousInputEnabled: true);
+
+        Assert.Equal((.8d, .6d), result);
     }
 }
