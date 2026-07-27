@@ -52,4 +52,18 @@ public sealed class KeyboardStateStoreTests
         Assert.False(store.GetSnapshot().IsPressed(InputKey.W));
         Assert.Equal(InputHealth.Unavailable, store.Health);
     }
+
+    [Fact]
+    public void Invalidated_capture_cannot_restore_or_consume_a_suppressed_key_bit()
+    {
+        var suppressedKeys = new CaptureSuppressedKeys();
+        suppressedKeys.BeginCapture(7);
+        Assert.True(suppressedKeys.TryMark(InputKey.W, 7));
+
+        suppressedKeys.BeginCapture(8);
+
+        Assert.False(suppressedKeys.TryMark(InputKey.W, 7));
+        Assert.False(suppressedKeys.TryTake(InputKey.W, 7));
+        Assert.False(suppressedKeys.TryTake(InputKey.W, 8));
+    }
 }

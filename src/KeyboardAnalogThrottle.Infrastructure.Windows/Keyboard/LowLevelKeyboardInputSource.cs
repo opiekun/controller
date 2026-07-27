@@ -31,9 +31,9 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
     private readonly KeyboardStateStore _stateStore = new();
     private readonly SuppressionPolicy _suppressionPolicy;
     private readonly NativeMethods.HookProcedure _hookProcedure;
+    private readonly CaptureSuppressedKeys _suppressedKeys = new();
     private SafeHookHandle? _hook;
     private long _captureGeneration;
-    private long _suppressedKeyMask;
     private int _acceptingInput;
     private int _engineIsRunning;
     private int _disposed;
@@ -82,6 +82,7 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
             _hook = new SafeHookHandle(nativeHandle);
             SynchronizeCurrentModifiers();
             _stateStore.SetHealth(InputHealth.Healthy);
+            _suppressedKeys.BeginCapture(captureGeneration);
             Volatile.Write(ref _captureGeneration, captureGeneration);
             Volatile.Write(ref _acceptingInput, 1);
         }
@@ -98,9 +99,9 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
             SetEngineRunning(isRunning: false);
             hook = _hook;
             _hook = null;
+            _suppressedKeys.BeginCapture(0);
             _stateStore.StopCapture();
             Volatile.Write(ref _captureGeneration, 0);
-            Interlocked.Exchange(ref _suppressedKeyMask, 0);
         }
 
         hook?.Dispose();
@@ -180,49 +181,14 @@ public sealed class LowLevelKeyboardInputSource : IKeyboardInputSource
             Volatile.Read(ref _engineIsRunning) != 0);
         if (suppress && _stateStore.IsCurrentCapture(captureGeneration))
         {
-            MarkSuppressed(key);
-            return true;
+            return _suppressedKeys.TryMark(key, captureGeneration);
         }
 
         return false;
     }
 
     private bool WasSuppressedOnDown(InputKey key, long captureGeneration)
-    {
-        return _stateStore.IsCurrentCapture(captureGeneration) && RemoveSuppressed(key);
-    }
-
-    private void MarkSuppressed(InputKey key)
-    {
-        var keyMask = unchecked((long)KeyboardSuppressionState.KeyMask(key));
-        if (keyMask != 0)
-        {
-            Interlocked.Or(ref _suppressedKeyMask, keyMask);
-        }
-    }
-
-    private bool RemoveSuppressed(InputKey key)
-    {
-        var keyMask = unchecked((long)KeyboardSuppressionState.KeyMask(key));
-        if (keyMask == 0)
-        {
-            return false;
-        }
-
-        while (true)
-        {
-            var observed = Volatile.Read(ref _suppressedKeyMask);
-            if ((observed & keyMask) == 0)
-            {
-                return false;
-            }
-
-            if (Interlocked.CompareExchange(ref _suppressedKeyMask, observed & ~keyMask, observed) == observed)
-            {
-                return true;
-            }
-        }
-    }
+        => _suppressedKeys.TryTake(key, captureGeneration);
 
     private void SynchronizeCurrentModifiers()
     {
