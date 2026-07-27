@@ -41,12 +41,15 @@ public sealed class SuppressionPolicy
     public bool ShouldSuppress(InputKey key, InputSnapshot snapshot, bool engineIsRunning)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        return _enabled &&
+        return ShouldSuppress(key, snapshot.Modifiers, engineIsRunning);
+    }
+
+    public bool ShouldSuppress(InputKey key, InputModifiers modifiers, bool engineIsRunning) =>
+        _enabled &&
             engineIsRunning &&
             !IsModifier(key) &&
             _mappedPrimaryKeys.Contains(key) &&
-            !_emergencyBinding.Matches(snapshot);
-    }
+            !IsCompleteEmergencyBinding(key, modifiers);
 
     public static bool ShouldSuppress(
         InputKey key,
@@ -63,6 +66,10 @@ public sealed class SuppressionPolicy
     }
 
     private void AddBinding(string binding) => _mappedPrimaryKeys.Add(BindingParser.Parse(binding).Primary);
+
+    private bool IsCompleteEmergencyBinding(InputKey key, InputModifiers modifiers) =>
+        key == _emergencyBinding.Primary &&
+        (modifiers & _emergencyBinding.Modifiers) == _emergencyBinding.Modifiers;
 
     private static bool IsModifier(InputKey key) => key is
         InputKey.LeftControl or InputKey.RightControl or

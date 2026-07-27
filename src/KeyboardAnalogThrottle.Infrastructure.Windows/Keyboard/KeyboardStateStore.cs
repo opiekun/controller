@@ -15,6 +15,7 @@ public sealed class KeyboardStateStore
     private readonly Dictionary<InputKey, long> _transitionSequences = [];
     private long _sequence;
     private long _captureGeneration;
+    private long _suppressionPressedKeyMask;
     private long _lastHeartbeatTimestamp;
     private InputHealth _health = InputHealth.Synchronizing;
 
@@ -45,6 +46,12 @@ public sealed class KeyboardStateStore
     public KeyStateChangedEventArgs? ApplyUp(InputKey key) => Apply(key, isDown: false);
 
     /// <summary>
+    /// Gets a coherent atomic key bitset for suppression without taking the state-store lock.
+    /// </summary>
+    public KeyboardSuppressionState SuppressionState =>
+        new(unchecked((ulong)Volatile.Read(ref _suppressionPressedKeyMask)));
+
+    /// <summary>
     /// Starts a capture session. Callbacks must present this generation before they may mutate state.
     /// </summary>
     public long BeginCapture()
@@ -52,7 +59,9 @@ public sealed class KeyboardStateStore
         lock (_gate)
         {
             ClearUnsafe(InputHealth.Synchronizing);
-            return ++_captureGeneration;
+            var nextGeneration = _captureGeneration + 1;
+            Volatile.Write(ref _captureGeneration, nextGeneration);
+            return nextGeneration;
         }
     }
 
@@ -63,18 +72,13 @@ public sealed class KeyboardStateStore
     {
         lock (_gate)
         {
-            ++_captureGeneration;
+            Volatile.Write(ref _captureGeneration, _captureGeneration + 1);
             ClearUnsafe(InputHealth.Unavailable);
         }
     }
 
     public bool IsCurrentCapture(long captureGeneration)
-    {
-        lock (_gate)
-        {
-            return captureGeneration != 0 && captureGeneration == _captureGeneration;
-        }
-    }
+        => captureGeneration != 0 && captureGeneration == Volatile.Read(ref _captureGeneration);
 
     public KeyStateChangedEventArgs? TryApplyDown(InputKey key, long captureGeneration) =>
         Apply(key, isDown: true, captureGeneration);
@@ -89,17 +93,6 @@ public sealed class KeyboardStateStore
             var snapshot = new InputSnapshot(_pressedKeys, _pendingTransitions, _transitionSequences);
             _pendingTransitions.Clear();
             return snapshot;
-        }
-    }
-
-    /// <summary>
-    /// Reads the current state without consuming its transition stream.
-    /// </summary>
-    public InputSnapshot PeekSnapshot()
-    {
-        lock (_gate)
-        {
-            return new InputSnapshot(_pressedKeys, _pendingTransitions, _transitionSequences);
         }
     }
 
@@ -119,6 +112,7 @@ public sealed class KeyboardStateStore
             SetModifier(InputKey.LeftControl, InputModifiers.Control);
             SetModifier(InputKey.LeftAlt, InputModifiers.Alt);
             SetModifier(InputKey.LeftShift, InputModifiers.Shift);
+            PublishSuppressionStateUnsafe();
             _lastHeartbeatTimestamp = Stopwatch.GetTimestamp();
 
             void SetModifier(InputKey key, InputModifiers flag)
@@ -166,7 +160,9 @@ public sealed class KeyboardStateStore
                 return null;
             }
 
-            var transition = new KeyTransition(key, isDown, ++_sequence, CurrentModifiers());
+            var modifiers = CurrentModifiers();
+            PublishSuppressionStateUnsafe();
+            var transition = new KeyTransition(key, isDown, ++_sequence, modifiers);
             _transitionSequences[key] = transition.Sequence;
             _pendingTransitions.Add(transition);
             return new KeyStateChangedEventArgs(transition);
@@ -181,6 +177,18 @@ public sealed class KeyboardStateStore
         _sequence = 0;
         _health = health;
         _lastHeartbeatTimestamp = Stopwatch.GetTimestamp();
+        Volatile.Write(ref _suppressionPressedKeyMask, 0);
+    }
+
+    private void PublishSuppressionStateUnsafe()
+    {
+        ulong mask = 0;
+        foreach (var key in _pressedKeys)
+        {
+            mask |= KeyboardSuppressionState.KeyMask(key);
+        }
+
+        Volatile.Write(ref _suppressionPressedKeyMask, unchecked((long)mask));
     }
 
     private InputModifiers CurrentModifiers()

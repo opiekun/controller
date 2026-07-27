@@ -37,6 +37,22 @@ public sealed class SuppressionPolicyTests
         Assert.False(policy.ShouldSuppress(InputKey.F12, emergencySnapshot, engineIsRunning: true));
     }
 
+    [Fact]
+    public void Lock_free_suppression_state_preserves_the_complete_emergency_hotkey()
+    {
+        var store = new KeyboardStateStore();
+        var policy = new SuppressionPolicy(Configuration(suppressMappedKeys: true, brakePrimary: "F12"));
+        store.ApplyDown(InputKey.LeftControl);
+        store.ApplyDown(InputKey.LeftAlt);
+        store.ApplyDown(InputKey.F12);
+
+        var state = store.SuppressionState;
+
+        Assert.True(state.IsPressed(InputKey.F12));
+        Assert.Equal(InputModifiers.Control | InputModifiers.Alt, state.Modifiers);
+        Assert.False(policy.ShouldSuppress(InputKey.F12, state.Modifiers, engineIsRunning: true));
+    }
+
     private static AppConfiguration Configuration(bool suppressMappedKeys, string brakePrimary = "S") => new()
     {
         Input = new InputConfiguration
