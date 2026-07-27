@@ -66,7 +66,15 @@ public sealed class VigemXbox360Controller : IVirtualController
             ThrowIfDisposed();
             if (_connected)
             {
-                ResetReportNoLock();
+                try
+                {
+                    ResetReportNoLock();
+                }
+                catch (Exception exception) when (IsDriverUnavailable(exception))
+                {
+                    throw new VigemDriverException(exception);
+                }
+
                 return Task.CompletedTask;
             }
 
