@@ -141,6 +141,69 @@ public sealed class ShortcutEditorViewModelTests
         Assert.Empty(service.SavedConfigurations);
     }
 
+    [Fact]
+    public async Task Save_preserves_every_nonstandard_fixed_level_entry_without_mutating_source_dictionary()
+    {
+        var throttleFixedLevels = new Dictionary<string, double>
+        {
+            ["Ctrl+T"] = .25d,
+            ["F1"] = .35d,
+            ["F2"] = .6d
+        };
+        var brakeFixedLevels = new Dictionary<string, double>
+        {
+            ["Ctrl+B"] = .25d,
+            ["F3"] = .4d
+        };
+        var configuration = CreateConfiguration(throttleFixedLevels, brakeFixedLevels);
+        var service = new RecordingConfigurationService(configuration);
+        var editor = new ShortcutEditorViewModel(service);
+        var throttleCustomEntry = Assert.Single(editor.ThrottleFixedLevels, entry => entry.Level == .35d);
+        var brakeCustomEntry = Assert.Single(editor.BrakeFixedLevels, entry => entry.Level == .4d);
+
+        throttleCustomEntry.Binding = "F4";
+        brakeCustomEntry.Binding = "F5";
+        await editor.SaveAsync(CancellationToken.None);
+
+        var saved = Assert.Single(service.SavedConfigurations);
+        Assert.Equal(new Dictionary<string, double>
+        {
+            ["Ctrl+T"] = .25d,
+            ["F4"] = .35d,
+            ["F2"] = .6d
+        }, saved.Throttle.FixedLevels);
+        Assert.Equal(new Dictionary<string, double>
+        {
+            ["Ctrl+B"] = .25d,
+            ["F5"] = .4d
+        }, saved.Brake.FixedLevels);
+        Assert.Equal(new Dictionary<string, double>
+        {
+            ["Ctrl+T"] = .25d,
+            ["F1"] = .35d,
+            ["F2"] = .6d
+        }, throttleFixedLevels);
+        Assert.Equal(new Dictionary<string, double>
+        {
+            ["Ctrl+B"] = .25d,
+            ["F3"] = .4d
+        }, brakeFixedLevels);
+    }
+
+    [Fact]
+    public async Task Save_rejects_duplicate_fixed_binding_strings_before_dictionary_creation()
+    {
+        var service = new RecordingConfigurationService(CreateConfiguration());
+        var editor = new ShortcutEditorViewModel(service);
+        editor.ThrottleFixedLevels[0].Binding = "F1";
+        editor.ThrottleFixedLevels[1].Binding = "F1";
+
+        await editor.SaveAsync(CancellationToken.None);
+
+        Assert.Equal("Throttle fixed bindings contain duplicate entries: 'F1'.", editor.ValidationMessage);
+        Assert.Empty(service.SavedConfigurations);
+    }
+
     private static AppConfiguration CreateConfiguration(
         IReadOnlyDictionary<string, double>? throttleFixedLevels = null,
         IReadOnlyDictionary<string, double>? brakeFixedLevels = null)

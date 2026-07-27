@@ -10,24 +10,8 @@ public sealed class ShortcutEditorViewModel : ObservableObject
 {
     private readonly IConfigurationService _configurationService;
     private readonly AppConfiguration _sourceConfiguration;
-    private readonly double _throttleFixed25Level;
-    private readonly double _throttleFixed50Level;
-    private readonly double _throttleFixed75Level;
-    private readonly double _throttleFixed100Level;
-    private readonly double _brakeFixed25Level;
-    private readonly double _brakeFixed50Level;
-    private readonly double _brakeFixed75Level;
-    private readonly double _brakeFixed100Level;
     private string _throttlePrimaryBinding;
-    private string _throttleFixed25Binding;
-    private string _throttleFixed50Binding;
-    private string _throttleFixed75Binding;
-    private string _throttleFixed100Binding;
     private string _brakePrimaryBinding;
-    private string _brakeFixed25Binding;
-    private string _brakeFixed50Binding;
-    private string _brakeFixed75Binding;
-    private string _brakeFixed100Binding;
     private string _throttleCutBinding;
     private string _emergencyDisableBinding;
     private string _ratchetIncreaseBinding;
@@ -40,17 +24,8 @@ public sealed class ShortcutEditorViewModel : ObservableObject
         _configurationService = configurationService ?? throw new ArgumentNullException(nameof(configurationService));
         _sourceConfiguration = configurationService.Current;
 
-        var throttleDefaults = ChannelConfiguration.CreateThrottleDefault().FixedLevels;
-        var brakeDefaults = ChannelConfiguration.CreateBrakeDefault().FixedLevels;
-        (_throttleFixed25Binding, _throttleFixed25Level) = GetFixedLevel(_sourceConfiguration.Throttle.FixedLevels, .25d, throttleDefaults);
-        (_throttleFixed50Binding, _throttleFixed50Level) = GetFixedLevel(_sourceConfiguration.Throttle.FixedLevels, .5d, throttleDefaults);
-        (_throttleFixed75Binding, _throttleFixed75Level) = GetFixedLevel(_sourceConfiguration.Throttle.FixedLevels, .75d, throttleDefaults);
-        (_throttleFixed100Binding, _throttleFixed100Level) = GetFixedLevel(_sourceConfiguration.Throttle.FixedLevels, 1d, throttleDefaults);
-        (_brakeFixed25Binding, _brakeFixed25Level) = GetFixedLevel(_sourceConfiguration.Brake.FixedLevels, .25d, brakeDefaults);
-        (_brakeFixed50Binding, _brakeFixed50Level) = GetFixedLevel(_sourceConfiguration.Brake.FixedLevels, .5d, brakeDefaults);
-        (_brakeFixed75Binding, _brakeFixed75Level) = GetFixedLevel(_sourceConfiguration.Brake.FixedLevels, .75d, brakeDefaults);
-        (_brakeFixed100Binding, _brakeFixed100Level) = GetFixedLevel(_sourceConfiguration.Brake.FixedLevels, 1d, brakeDefaults);
-
+        ThrottleFixedLevels = CreateEntries(_sourceConfiguration.Throttle.FixedLevels);
+        BrakeFixedLevels = CreateEntries(_sourceConfiguration.Brake.FixedLevels);
         _throttlePrimaryBinding = _sourceConfiguration.Throttle.PrimaryBinding;
         _brakePrimaryBinding = _sourceConfiguration.Brake.PrimaryBinding;
         _throttleCutBinding = _sourceConfiguration.Input.ThrottleCutBinding;
@@ -68,26 +43,26 @@ public sealed class ShortcutEditorViewModel : ObservableObject
 
     public string ThrottleFixed25Binding
     {
-        get => _throttleFixed25Binding;
-        set => SetProperty(ref _throttleFixed25Binding, value);
+        get => GetBindingAtLevel(ThrottleFixedLevels, .25d);
+        set => SetBindingAtLevel(ThrottleFixedLevels, .25d, value, nameof(ThrottleFixed25Binding));
     }
 
     public string ThrottleFixed50Binding
     {
-        get => _throttleFixed50Binding;
-        set => SetProperty(ref _throttleFixed50Binding, value);
+        get => GetBindingAtLevel(ThrottleFixedLevels, .5d);
+        set => SetBindingAtLevel(ThrottleFixedLevels, .5d, value, nameof(ThrottleFixed50Binding));
     }
 
     public string ThrottleFixed75Binding
     {
-        get => _throttleFixed75Binding;
-        set => SetProperty(ref _throttleFixed75Binding, value);
+        get => GetBindingAtLevel(ThrottleFixedLevels, .75d);
+        set => SetBindingAtLevel(ThrottleFixedLevels, .75d, value, nameof(ThrottleFixed75Binding));
     }
 
     public string ThrottleFixed100Binding
     {
-        get => _throttleFixed100Binding;
-        set => SetProperty(ref _throttleFixed100Binding, value);
+        get => GetBindingAtLevel(ThrottleFixedLevels, 1d);
+        set => SetBindingAtLevel(ThrottleFixedLevels, 1d, value, nameof(ThrottleFixed100Binding));
     }
 
     public string BrakePrimaryBinding
@@ -98,27 +73,31 @@ public sealed class ShortcutEditorViewModel : ObservableObject
 
     public string BrakeFixed25Binding
     {
-        get => _brakeFixed25Binding;
-        set => SetProperty(ref _brakeFixed25Binding, value);
+        get => GetBindingAtLevel(BrakeFixedLevels, .25d);
+        set => SetBindingAtLevel(BrakeFixedLevels, .25d, value, nameof(BrakeFixed25Binding));
     }
 
     public string BrakeFixed50Binding
     {
-        get => _brakeFixed50Binding;
-        set => SetProperty(ref _brakeFixed50Binding, value);
+        get => GetBindingAtLevel(BrakeFixedLevels, .5d);
+        set => SetBindingAtLevel(BrakeFixedLevels, .5d, value, nameof(BrakeFixed50Binding));
     }
 
     public string BrakeFixed75Binding
     {
-        get => _brakeFixed75Binding;
-        set => SetProperty(ref _brakeFixed75Binding, value);
+        get => GetBindingAtLevel(BrakeFixedLevels, .75d);
+        set => SetBindingAtLevel(BrakeFixedLevels, .75d, value, nameof(BrakeFixed75Binding));
     }
 
     public string BrakeFixed100Binding
     {
-        get => _brakeFixed100Binding;
-        set => SetProperty(ref _brakeFixed100Binding, value);
+        get => GetBindingAtLevel(BrakeFixedLevels, 1d);
+        set => SetBindingAtLevel(BrakeFixedLevels, 1d, value, nameof(BrakeFixed100Binding));
     }
+
+    public IReadOnlyList<FixedLevelEditorEntryViewModel> ThrottleFixedLevels { get; }
+
+    public IReadOnlyList<FixedLevelEditorEntryViewModel> BrakeFixedLevels { get; }
 
     public string ThrottleCutBinding
     {
@@ -158,6 +137,13 @@ public sealed class ShortcutEditorViewModel : ObservableObject
 
     public async Task SaveAsync(CancellationToken cancellationToken)
     {
+        if (!TryCreateFixedLevels(ThrottleFixedLevels, "Throttle", out var throttleFixedLevels, out var validationMessage) ||
+            !TryCreateFixedLevels(BrakeFixedLevels, "Brake", out var brakeFixedLevels, out validationMessage))
+        {
+            ValidationMessage = validationMessage;
+            return;
+        }
+
         var candidate = _sourceConfiguration with
         {
             Input = _sourceConfiguration.Input with
@@ -168,28 +154,12 @@ public sealed class ShortcutEditorViewModel : ObservableObject
             Throttle = _sourceConfiguration.Throttle with
             {
                 PrimaryBinding = ThrottlePrimaryBinding,
-                FixedLevels = CreateFixedLevels(
-                    ThrottleFixed25Binding,
-                    _throttleFixed25Level,
-                    ThrottleFixed50Binding,
-                    _throttleFixed50Level,
-                    ThrottleFixed75Binding,
-                    _throttleFixed75Level,
-                    ThrottleFixed100Binding,
-                    _throttleFixed100Level)
+                FixedLevels = throttleFixedLevels
             },
             Brake = _sourceConfiguration.Brake with
             {
                 PrimaryBinding = BrakePrimaryBinding,
-                FixedLevels = CreateFixedLevels(
-                    BrakeFixed25Binding,
-                    _brakeFixed25Level,
-                    BrakeFixed50Binding,
-                    _brakeFixed50Level,
-                    BrakeFixed75Binding,
-                    _brakeFixed75Level,
-                    BrakeFixed100Binding,
-                    _brakeFixed100Level)
+                FixedLevels = brakeFixedLevels
             },
             Ratchet = _sourceConfiguration.Ratchet with
             {
@@ -210,36 +180,68 @@ public sealed class ShortcutEditorViewModel : ObservableObject
         ValidationMessage = string.Empty;
     }
 
-    private static (string Binding, double Level) GetFixedLevel(
-        IReadOnlyDictionary<string, double> fixedLevels,
+    private static IReadOnlyList<FixedLevelEditorEntryViewModel> CreateEntries(IReadOnlyDictionary<string, double> fixedLevels) =>
+        fixedLevels.Select(fixedLevel => new FixedLevelEditorEntryViewModel(fixedLevel.Key, fixedLevel.Value)).ToArray();
+
+    private static string GetBindingAtLevel(IReadOnlyList<FixedLevelEditorEntryViewModel> fixedLevels, double level) =>
+        fixedLevels.FirstOrDefault(fixedLevel => fixedLevel.Level == level)?.Binding ?? string.Empty;
+
+    private void SetBindingAtLevel(
+        IReadOnlyList<FixedLevelEditorEntryViewModel> fixedLevels,
         double level,
-        IReadOnlyDictionary<string, double> defaults)
+        string binding,
+        string propertyName)
     {
-        foreach (var fixedLevel in fixedLevels)
+        var fixedLevel = fixedLevels.FirstOrDefault(entry => entry.Level == level);
+        if (fixedLevel is null || fixedLevel.Binding == binding)
         {
-            if (fixedLevel.Value == level)
-            {
-                return (fixedLevel.Key, fixedLevel.Value);
-            }
+            return;
         }
 
-        var defaultBinding = defaults.Single(fixedLevel => fixedLevel.Value == level);
-        return (defaultBinding.Key, defaultBinding.Value);
+        fixedLevel.Binding = binding;
+        OnPropertyChanged(propertyName);
     }
 
-    private static IReadOnlyDictionary<string, double> CreateFixedLevels(
-        string binding25,
-        double level25,
-        string binding50,
-        double level50,
-        string binding75,
-        double level75,
-        string binding100,
-        double level100) => new Dictionary<string, double>
+    private static bool TryCreateFixedLevels(
+        IReadOnlyList<FixedLevelEditorEntryViewModel> entries,
+        string channelName,
+        out IReadOnlyDictionary<string, double> fixedLevels,
+        out string validationMessage)
     {
-        [binding25] = level25,
-        [binding50] = level50,
-        [binding75] = level75,
-        [binding100] = level100
-    };
+        var duplicate = entries
+            .GroupBy(entry => entry.Binding, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicate is not null)
+        {
+            fixedLevels = new Dictionary<string, double>();
+            validationMessage = $"{channelName} fixed bindings contain duplicate entries: '{duplicate.Key}'.";
+            return false;
+        }
+
+        fixedLevels = entries.ToDictionary(entry => entry.Binding, entry => entry.Level, StringComparer.OrdinalIgnoreCase);
+        validationMessage = string.Empty;
+        return true;
+    }
+}
+
+/// <summary>
+/// An editable fixed-level binding retained from the configuration snapshot.
+/// </summary>
+public sealed class FixedLevelEditorEntryViewModel : ObservableObject
+{
+    private string _binding;
+
+    public FixedLevelEditorEntryViewModel(string binding, double level)
+    {
+        _binding = binding;
+        Level = level;
+    }
+
+    public string Binding
+    {
+        get => _binding;
+        set => SetProperty(ref _binding, value);
+    }
+
+    public double Level { get; }
 }
