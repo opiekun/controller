@@ -256,6 +256,62 @@ public sealed class ShortcutEditorViewModelTests
         }, saved.Brake.FixedLevels);
     }
 
+    [Fact]
+    public async Task Save_applies_deliberate_shortcut_edit_to_configuration_reloaded_while_waiting_for_update_gate()
+    {
+        var initial = CreateConfiguration();
+        var reloaded = initial with
+        {
+            Controller = initial.Controller with { UpdateRateHz = 60 },
+            Brake = initial.Brake with { PrimaryBinding = "N" }
+        };
+        var service = new RecordingConfigurationService(initial)
+        {
+            ConfigurationToApplyDuringUpdate = reloaded
+        };
+        var editor = new ShortcutEditorViewModel(service)
+        {
+            ThrottlePrimaryBinding = "Y"
+        };
+
+        await editor.SaveAsync(CancellationToken.None);
+
+        var saved = Assert.Single(service.SavedConfigurations);
+        Assert.Equal(60, saved.Controller.UpdateRateHz);
+        Assert.Equal("N", saved.Brake.PrimaryBinding);
+        Assert.Equal("Y", saved.Throttle.PrimaryBinding);
+    }
+
+    [Fact]
+    public async Task Background_configuration_change_waits_for_editor_refresh_on_captured_synchronization_context()
+    {
+        var previousContext = SynchronizationContext.Current;
+        var context = new RecordingSynchronizationContext();
+        SynchronizationContext.SetSynchronizationContext(context);
+        ShortcutEditorViewModel? editor = null;
+        try
+        {
+            var initial = CreateConfiguration();
+            var service = new RecordingConfigurationService(initial);
+            editor = new ShortcutEditorViewModel(service);
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+            var reloaded = initial with { Brake = initial.Brake with { PrimaryBinding = "N" } };
+
+            var reload = Task.Run(() => service.PublishReloadAsync(reloaded));
+            await context.Posted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+            Assert.False(reload.IsCompleted);
+            context.RunPostedCallbacks();
+            await reload;
+            Assert.Equal("N", editor.BrakePrimaryBinding);
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+            editor?.Dispose();
+        }
+    }
+
     private static AppConfiguration CreateConfiguration(
         IReadOnlyDictionary<string, double>? throttleFixedLevels = null,
         IReadOnlyDictionary<string, double>? brakeFixedLevels = null)
@@ -293,6 +349,8 @@ public sealed class ShortcutEditorViewModelTests
 
         public List<AppConfiguration> SavedConfigurations { get; } = [];
 
+        public AppConfiguration? ConfigurationToApplyDuringUpdate { get; init; }
+
         public event Func<AppConfiguration, CancellationToken, Task>? ConfigurationChanged;
 
         public Task<ConfigurationReloadResult> ReloadAsync(CancellationToken cancellationToken) =>
@@ -300,6 +358,14 @@ public sealed class ShortcutEditorViewModelTests
 
         public Task SaveAsync(AppConfiguration configuration, CancellationToken cancellationToken)
         {
+            SavedConfigurations.Add(configuration);
+            return Task.CompletedTask;
+        }
+
+        public Task UpdateAsync(Func<AppConfiguration, AppConfiguration> update, CancellationToken cancellationToken)
+        {
+            Current = ConfigurationToApplyDuringUpdate ?? Current;
+            var configuration = update(Current);
             SavedConfigurations.Add(configuration);
             return Task.CompletedTask;
         }
@@ -316,6 +382,27 @@ public sealed class ShortcutEditorViewModelTests
             }
 
             Current = configuration;
+        }
+    }
+
+    private sealed class RecordingSynchronizationContext : SynchronizationContext
+    {
+        private readonly Queue<(SendOrPostCallback Callback, object? State)> _callbacks = [];
+
+        public TaskCompletionSource Posted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override void Post(SendOrPostCallback callback, object? state)
+        {
+            _callbacks.Enqueue((callback, state));
+            Posted.TrySetResult();
+        }
+
+        public void RunPostedCallbacks()
+        {
+            while (_callbacks.TryDequeue(out var callback))
+            {
+                callback.Callback(callback.State);
+            }
         }
     }
 }

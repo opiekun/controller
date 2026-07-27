@@ -15,6 +15,11 @@ public interface IConfigurationService
     Task<ConfigurationReloadResult> ReloadAsync(CancellationToken cancellationToken);
 
     Task SaveAsync(AppConfiguration configuration, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Applies a configuration transform while holding the service operation gate.
+    /// </summary>
+    Task UpdateAsync(Func<AppConfiguration, AppConfiguration> update, CancellationToken cancellationToken);
 }
 
 public sealed record ConfigurationReloadResult(

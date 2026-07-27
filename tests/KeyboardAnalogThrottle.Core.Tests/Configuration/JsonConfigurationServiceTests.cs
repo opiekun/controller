@@ -140,6 +140,43 @@ public sealed class JsonConfigurationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Update_applies_a_transform_after_an_overlapping_reload_releases_the_operation_gate()
+    {
+        using var service = new JsonConfigurationService(ConfigPath);
+        Assert.True((await service.ReloadAsync(CancellationToken.None)).IsSuccess);
+        var reloadEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowReloadToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var blockFirstPublication = true;
+        service.ConfigurationChanged += async (_, _) =>
+        {
+            if (!blockFirstPublication)
+            {
+                return;
+            }
+
+            blockFirstPublication = false;
+            reloadEntered.TrySetResult();
+            await allowReloadToFinish.Task;
+        };
+        await File.WriteAllTextAsync(ConfigPath, "{ \"controller\": { \"updateRateHz\": 60 } }");
+
+        var reload = service.ReloadAsync(CancellationToken.None);
+        await reloadEntered.Task;
+        var update = service.UpdateAsync(
+            configuration => configuration with
+            {
+                Throttle = configuration.Throttle with { PrimaryBinding = "Y" }
+            },
+            CancellationToken.None);
+        allowReloadToFinish.TrySetResult();
+
+        Assert.True((await reload).IsSuccess);
+        await update;
+        Assert.Equal(60, service.Current.Controller.UpdateRateHz);
+        Assert.Equal("Y", service.Current.Throttle.PrimaryBinding);
+    }
+
+    [Fact]
     public async Task Deleting_the_configuration_file_requests_a_debounced_reload_that_recreates_the_default()
     {
         using var service = new JsonConfigurationService(ConfigPath);

@@ -430,6 +430,8 @@ public sealed class MainWindowViewModelTests
             Task.FromResult(ConfigurationReloadResult.Success);
 
         public Task SaveAsync(AppConfiguration configuration, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task UpdateAsync(Func<AppConfiguration, AppConfiguration> update, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class RecordingConfigurationService(AppConfiguration current) : IConfigurationService
@@ -452,6 +454,9 @@ public sealed class MainWindowViewModelTests
             SavedConfigurations.Add(configuration);
             return Task.CompletedTask;
         }
+
+        public Task UpdateAsync(Func<AppConfiguration, AppConfiguration> update, CancellationToken cancellationToken) =>
+            SaveAsync(update(Current), cancellationToken);
     }
 
     private sealed class StubShellService : IShellService

@@ -109,6 +109,8 @@ public sealed class ApplicationLifetimeServiceTests
             Task.FromResult(ConfigurationReloadResult.Success);
 
         public Task SaveAsync(AppConfiguration configuration, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task UpdateAsync(Func<AppConfiguration, AppConfiguration> update, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class MutableConfigurationService(AppConfiguration current) : IConfigurationService
@@ -135,6 +137,9 @@ public sealed class ApplicationLifetimeServiceTests
             Task.FromResult(ConfigurationReloadResult.Success);
 
         public Task SaveAsync(AppConfiguration configuration, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task UpdateAsync(Func<AppConfiguration, AppConfiguration> update, CancellationToken cancellationToken) =>
+            PublishAsync(update(Current));
     }
 
     private sealed class ThrowingEngineProvider : IServiceProvider

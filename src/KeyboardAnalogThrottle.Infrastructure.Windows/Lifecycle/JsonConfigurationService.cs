@@ -271,6 +271,35 @@ public sealed class JsonConfigurationService : IConfigurationService, IDisposabl
         }
     }
 
+    public async Task UpdateAsync(Func<AppConfiguration, AppConfiguration> update, CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(update);
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            AppConfiguration current;
+            lock (_currentGate)
+            {
+                current = _current;
+            }
+
+            var candidate = update(current) ?? throw new InvalidOperationException("Configuration update returned no candidate.");
+            var errors = ConfigurationValidator.Validate(candidate);
+            if (errors.Count != 0)
+            {
+                throw new ArgumentException(string.Join(Environment.NewLine, errors.Select(static error => $"{error.PropertyName}: {error.Message}")), nameof(update));
+            }
+
+            await WriteAtomicallyAsync(candidate, replaceExisting: true, cancellationToken).ConfigureAwait(false);
+            await PublishConfigurationAsync(candidate, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
     private void OnConfigurationFileChanged(object sender, FileSystemEventArgs eventArgs) => ScheduleReload();
 
     private void OnConfigurationFileRenamed(object sender, RenamedEventArgs eventArgs) => ScheduleReload();

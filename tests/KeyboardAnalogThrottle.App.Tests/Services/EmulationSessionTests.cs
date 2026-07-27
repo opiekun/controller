@@ -342,5 +342,8 @@ public sealed class EmulationSessionTests
             Task.FromResult(ConfigurationReloadResult.Success);
 
         public Task SaveAsync(AppConfiguration configuration, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task UpdateAsync(Func<AppConfiguration, AppConfiguration> update, CancellationToken cancellationToken) =>
+            PublishAsync(update(Current));
     }
 }

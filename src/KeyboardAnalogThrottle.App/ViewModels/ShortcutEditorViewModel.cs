@@ -10,6 +10,7 @@ namespace KeyboardAnalogThrottle.App.ViewModels;
 public sealed class ShortcutEditorViewModel : ObservableObject, IDisposable
 {
     private readonly IConfigurationService _configurationService;
+    private readonly SynchronizationContext? _synchronizationContext;
     private readonly ObservableCollection<FixedLevelEditorEntryViewModel> _throttleFixedLevels;
     private readonly ObservableCollection<FixedLevelEditorEntryViewModel> _brakeFixedLevels;
     private AppConfiguration _sourceConfiguration;
@@ -26,6 +27,7 @@ public sealed class ShortcutEditorViewModel : ObservableObject, IDisposable
     public ShortcutEditorViewModel(IConfigurationService configurationService)
     {
         _configurationService = configurationService ?? throw new ArgumentNullException(nameof(configurationService));
+        _synchronizationContext = SynchronizationContext.Current;
         _sourceConfiguration = configurationService.Current;
 
         _throttleFixedLevels = new ObservableCollection<FixedLevelEditorEntryViewModel>(CreateEntries(_sourceConfiguration.Throttle.FixedLevels));
@@ -155,32 +157,73 @@ public sealed class ShortcutEditorViewModel : ObservableObject, IDisposable
 
     public async Task SaveAsync(CancellationToken cancellationToken)
     {
-        var candidate = CreateCandidate(_configurationService.Current, out var validationMessage);
-        if (candidate is null)
+        AppConfiguration? saved = null;
+        try
         {
-            ValidationMessage = validationMessage;
+            await _configurationService.UpdateAsync(latest =>
+            {
+                var candidate = CreateCandidate(latest, out var validationMessage);
+                if (candidate is null)
+                {
+                    throw new ShortcutValidationException(validationMessage);
+                }
+
+                var errors = ConfigurationValidator.Validate(candidate);
+                if (errors.Count != 0)
+                {
+                    throw new ShortcutValidationException(string.Join(Environment.NewLine, errors.Select(error => error.Message)));
+                }
+
+                saved = candidate;
+                return candidate;
+            }, cancellationToken);
+        }
+        catch (ShortcutValidationException exception)
+        {
+            ValidationMessage = exception.Message;
             return;
         }
 
-        var errors = ConfigurationValidator.Validate(candidate);
-        if (errors.Count != 0)
-        {
-            ValidationMessage = string.Join(Environment.NewLine, errors.Select(error => error.Message));
-            return;
-        }
-
-        await _configurationService.SaveAsync(candidate, cancellationToken);
-        RefreshFromConfiguration(candidate);
+        RefreshFromConfiguration(saved!);
     }
 
     private Task OnConfigurationChangedAsync(AppConfiguration configuration, CancellationToken cancellationToken)
     {
-        if (!_disposed)
+        if (_disposed)
         {
-            RefreshFromConfiguration(configuration);
+            return Task.CompletedTask;
         }
 
-        return Task.CompletedTask;
+        if (_synchronizationContext is null || SynchronizationContext.Current == _synchronizationContext)
+        {
+            RefreshFromConfiguration(configuration);
+            return Task.CompletedTask;
+        }
+
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _synchronizationContext.Post(static state =>
+        {
+            var update = (ConfigurationRefresh)state!;
+            try
+            {
+                update.CancellationToken.ThrowIfCancellationRequested();
+                if (!update.Editor._disposed)
+                {
+                    update.Editor.RefreshFromConfiguration(update.Configuration);
+                }
+
+                update.Completion.TrySetResult();
+            }
+            catch (OperationCanceledException exception)
+            {
+                update.Completion.TrySetCanceled(exception.CancellationToken);
+            }
+            catch (Exception exception)
+            {
+                update.Completion.TrySetException(exception);
+            }
+        }, new ConfigurationRefresh(this, configuration, cancellationToken, completion));
+        return completion.Task;
     }
 
     private AppConfiguration? CreateCandidate(AppConfiguration latest, out string validationMessage)
@@ -300,6 +343,14 @@ public sealed class ShortcutEditorViewModel : ObservableObject, IDisposable
             destination.Add(entry);
         }
     }
+
+    private sealed class ShortcutValidationException(string message) : Exception(message);
+
+    private sealed record ConfigurationRefresh(
+        ShortcutEditorViewModel Editor,
+        AppConfiguration Configuration,
+        CancellationToken CancellationToken,
+        TaskCompletionSource Completion);
 
     private static string GetBindingAtLevel(IReadOnlyList<FixedLevelEditorEntryViewModel> fixedLevels, double level) =>
         fixedLevels.FirstOrDefault(fixedLevel => fixedLevel.Level == level)?.Binding ?? string.Empty;
